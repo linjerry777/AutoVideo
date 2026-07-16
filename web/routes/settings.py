@@ -7,6 +7,18 @@ from web import scheduler_service
 
 router = APIRouter(prefix="/api")
 
+SENSITIVE_SETTINGS = {
+    "fish_audio_key": "FISH_AUDIO_API_KEY",
+    "upload_post_key": "UPLOAD_POST_KEY",
+    "unsplash_key": "UNSPLASH_ACCESS_KEY",
+    "pexels_api_key": "PEXELS_API_KEY",
+    "youtube_api_key": "YOUTUBE_API_KEY",
+    "kling_access_key": "KLING_ACCESS_KEY",
+    "kling_secret_key": "KLING_SECRET_KEY",
+    "replicate_api_token": "REPLICATE_API_TOKEN",
+    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+}
+
 
 class SettingsUpdate(BaseModel):
     schedule_hour:   str | None = None
@@ -36,6 +48,8 @@ class SettingsUpdate(BaseModel):
     # Telegram Bot
     telegram_bot_token:   str | None = None
     telegram_chat_ids:    str | None = None   # comma-separated chat IDs
+    media_ops_daily_report_telegram: str | None = None
+    media_ops_publish_authority: str | None = None
     # 影片渲染器
     video_renderer:       str | None = None   # "ffmpeg" | "remotion"
     # Trending account profiles
@@ -48,18 +62,30 @@ class SettingsUpdate(BaseModel):
     autopilot_enabled:              str | None = None
     autopilot_dry_run:              str | None = None
     autopilot_news_enabled:         str | None = None
+    autopilot_tech_judgement_enabled: str | None = None
     autopilot_trending_enabled:     str | None = None
+    autopilot_storyboard_enabled:   str | None = None
+    autopilot_storyboard_profile:   str | None = None
+    autopilot_storyboard_daily_candidates: str | None = None
     autopilot_figure_enabled:       str | None = None
+    autopilot_business_finance_enabled: str | None = None
     autopilot_news_strategy:        str | None = None
     autopilot_news_profile:         str | None = None
+    autopilot_tech_judgement_profile: str | None = None
     autopilot_trending_strategy:    str | None = None
     autopilot_trending_profile:     str | None = None
     autopilot_figure_tech_profile:  str | None = None
+    autopilot_business_finance_profile: str | None = None
     autopilot_figure_entertainment_profile: str | None = None
     autopilot_platforms:            str | None = None
+    autopilot_business_finance_sources: str | None = None
+    autopilot_business_finance_keywords: str | None = None
+    autopilot_business_finance_offset_hours: str | None = None
     autopilot_figure_tech_names:    str | None = None
     autopilot_figure_entertainment_names: str | None = None
     # ManyChat funnel — caption + first_comment 帶 keyword 引流到部落格
+    manychat_cta_enabled:           str | None = None
+    manychat_cta_strategies:        str | None = None
     cta_kw_tech:                    str | None = None
     cta_kw_entertain:               str | None = None
     cta_blog_url:                   str | None = None
@@ -75,9 +101,14 @@ def get_settings():
     s.setdefault("llm_proxy_url", llm_status["proxy_url"])
     s.setdefault("llm_model", llm_status["model"])
     s["llm_status"] = llm_status
-    # Expose whether optional API keys are configured (without revealing the key)
-    # DB key takes priority over .env
-    s["youtube_key_set"] = bool(s.get("youtube_api_key") or os.getenv("YOUTUBE_API_KEY", ""))
+    # Never send stored credentials to the browser. Password fields are
+    # write-only; the UI receives only a corresponding *_set flag.
+    for key, env_name in SENSITIVE_SETTINGS.items():
+        configured = bool(s.get(key) or os.getenv(env_name, ""))
+        s[f"{key}_set"] = configured
+        s[key] = ""
+    # Backward-compatible name used by the dashboard.
+    s["youtube_key_set"] = s["youtube_api_key_set"]
     return s
 
 
@@ -85,6 +116,8 @@ def get_settings():
 def update_settings(body: SettingsUpdate):
     updated = body.model_dump(exclude_none=True)
     for k, v in updated.items():
+        if k in SENSITIVE_SETTINGS and not str(v).strip():
+            continue
         set_setting(k, str(v))
 
     if "schedule_hour" in updated or "schedule_minute" in updated:

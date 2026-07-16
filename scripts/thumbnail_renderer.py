@@ -6,12 +6,13 @@ Usage:
     python scripts/thumbnail_renderer.py 2026-04-17
     python scripts/thumbnail_renderer.py 2026-04-17/job_5
 """
-import base64, io, json, os, shutil, subprocess, sys, tempfile
+import base64, json, os, shutil, subprocess, sys, tempfile
 from pathlib import Path
 from datetime import date
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 TODAY = sys.argv[1] if len(sys.argv) > 1 else date.today().isoformat()
 
@@ -22,6 +23,9 @@ NEWS_FILE     = PIPE_DIR / "news.json"
 REMOTION_DIR  = Path(os.environ.get("REMOTION_DIR", BASE_DIR / "remotion")).resolve()
 OUTPUT        = PIPE_DIR / "thumbnail.png"
 DORO_LOGO     = BASE_DIR / "assets" / "brand" / "doro_insight_logo.png"
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 
 def file_to_data_url(path: Path, mime: str) -> str:
@@ -140,6 +144,16 @@ def render(props: dict, output: Path):
 
 
 def main():
+    try:
+        from scripts.editorial_thumbnail import generate_editorial_thumbnail
+
+        generated = generate_editorial_thumbnail(PIPE_DIR, OUTPUT)
+        if generated:
+            print(f"\nDone: {generated}", file=sys.stdout)
+            return
+    except Exception as exc:
+        print(f"[WARN] editorial thumbnail failed, fallback to Remotion: {exc}", file=sys.stderr)
+
     props = build_props()
     render(props, OUTPUT)
     print(f"\nDone: {OUTPUT}", file=sys.stdout)

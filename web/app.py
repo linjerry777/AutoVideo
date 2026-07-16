@@ -17,15 +17,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from web.db import init_db, get_setting
+from web.db import init_db, get_setting, mark_stale_running_jobs
 from web import job_runner, scheduler_service
-from web.routes import jobs, events, media, settings, news, accounts, trending, analytics, schedule
+from web.routes import jobs, events, media, settings, news, accounts, trending, analytics, schedule, storyboards
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 啟動
     init_db()
+    mark_stale_running_jobs("Recovered stale running job after backend restart/reload; no active runner owns this job.")
     job_runner.set_event_loop(asyncio.get_event_loop())
     hour   = int(get_setting("schedule_hour",   "8"))
     minute = int(get_setting("schedule_minute", "0"))
@@ -69,6 +70,7 @@ app.include_router(accounts.router)
 app.include_router(trending.router)
 app.include_router(analytics.router)
 app.include_router(schedule.router)
+app.include_router(storyboards.router)
 
 
 @app.get("/")

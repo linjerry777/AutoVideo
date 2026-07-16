@@ -7,8 +7,10 @@ from pydantic import BaseModel
 
 from web.db import (create_job, get_job, list_jobs, get_stats,
                     get_setting, update_job, get_cache_item,
-                    mark_news_blocked_by_url, mark_news_blocked)
+                    mark_news_blocked_by_url, mark_news_blocked,
+                    mark_stale_running_jobs)
 from web import job_runner
+from web import content_strategy
 
 BASE_DIR = Path(__file__).parent.parent.parent
 
@@ -83,18 +85,21 @@ def trigger(req: TriggerRequest):
 
 
 _STRATEGY_LABEL = {
+    "tech_judgement": "DORO 科技判讀",
     "tech":          "科技",
     "tech_tutorial": "科技教學",
     "quote_analysis": "名人語錄解析",
     "figure_tech": "科技大咖解析",
     "figure_entertainment": "娛樂咖解析",
     "entertainment": "娛樂",
+    "business_finance": "商業判讀",
     "finance":       "財經",
     "pet":           "寵物",
     "generic":       "新聞",
 }
 
 _TRIGGERED_LABEL = {
+    "autopilot_tech_judgement": ("🧠", "DORO 科技判讀"),
     "autopilot_news":     ("📰", "新聞"),
     "autopilot_trending": ("🔥", "娛樂"),
     "autopilot_figure_tech": ("🧠", "科技大咖"),
@@ -120,7 +125,7 @@ def _enrich_display(job: dict) -> dict:
                 first_title = items[0].get("title") or items[0].get("hook") or ""
         except Exception:
             pass
-    label = _STRATEGY_LABEL.get(strategy, "")
+    label = content_strategy.strategy_label(strategy) if strategy else ""
     parts = [p for p in (label, first_title) if p]
     display = " · ".join(parts) if parts else ""
     if not display:
@@ -191,8 +196,16 @@ def compile_videos_api(req: CompileRequest):
 
 @router.get("/jobs/running")
 def running_job():
-    return {"running": job_runner.is_running(),
-            "job_id": job_runner.get_running_job_id()}
+    running = job_runner.is_running()
+    job_id = job_runner.get_running_job_id()
+    recovered = []
+    if not running:
+        recovered = mark_stale_running_jobs(
+            "Recovered stale running job; API runner state is idle and no active worker owns this job."
+        )
+    return {"running": running,
+            "job_id": job_id,
+            "recovered_stale_job_ids": recovered}
 
 
 @router.get("/jobs/{job_id}")
@@ -426,6 +439,7 @@ _HASHTAGS = {
         "figure_tech": "#fyp #科技大咖 #黃仁勳 #AI思維 #創業思維 #Doro日報",
         "figure_entertainment": "#fyp #娛樂咖 #名人金句 #人生金句 #台灣娛樂 #Doro日報",
         "entertainment": "#TikTokTaiwan #台灣娛樂 #娛樂懶人包 #熱搜 #Doro日報 #fyp",
+        "business_finance": "#fyp #商業判讀 #商業模式 #財經新聞 #非投資建議 #Doro日報",
         "finance":       "#fyp #台股 #財經新聞 #投資 #股市 #Doro日報",
         "pet":           "#fyp #萌寵 #寵物日常 #貓狗 #療癒 #Doro日報",
         "generic":       "#fyp #每日新聞 #台灣熱搜 #懶人包 #Doro日報 #TikTokTaiwan",
@@ -439,6 +453,7 @@ _HASHTAGS = {
         "figure_tech": "#科技大咖 #黃仁勳 #AI思維 #創業思維 #Doro日報",
         "figure_entertainment": "#娛樂咖 #名人金句 #人生金句 #台灣娛樂 #Doro日報",
         "entertainment": "#娛樂懶人包 #台灣熱搜 #追劇 #Doro日報 #娛樂圈",
+        "business_finance": "#商業判讀 #商業模式 #財經新聞 #科技財經 #非投資建議",
         "finance":       "#財經新聞 #台股 #投資理財 #Doro日報 #股市",
         "pet":           "#萌寵日常 #寵物 #療癒 #Doro日報 #毛孩",
         "generic":       "#台灣新聞 #每日懶人包 #熱搜 #Doro日報 #新聞整理",
@@ -450,6 +465,7 @@ _HASHTAGS = {
         "figure_tech": "#科技大咖 #AI思維 #創業思維 #黃仁勳 #Doro日報",
         "figure_entertainment": "#娛樂咖 #名人金句 #台灣娛樂 #人生金句 #Doro日報",
         "entertainment": "#娛樂新聞 #台灣娛樂 #熱搜話題 #追劇 #Doro日報",
+        "business_finance": "#商業判讀 #商業模式 #財經新聞 #科技財經 #非投資建議",
         "finance":       "#財經 #投資理財 #台股 #股市 #Doro日報",
         "pet":           "#萌寵 #寵物日常 #療癒 #Doro日報",
         "generic":       "#每日新聞 #台灣新聞 #熱搜 #懶人包 #Doro日報",
@@ -461,6 +477,7 @@ _HASHTAGS = {
         "figure_tech": "#科技大咖 #Doro日報",
         "figure_entertainment": "#娛樂咖 #Doro日報",
         "entertainment": "#娛樂懶人包 #Doro日報",
+        "business_finance": "#商業判讀 #非投資建議",
         "finance":       "#財經 #Doro日報",
         "pet":           "#萌寵 #Doro日報",
         "generic":       "#每日新聞 #Doro日報",
@@ -472,6 +489,7 @@ _HASHTAGS = {
         "figure_tech": "#AI #科技大咖 #黃仁勳",
         "figure_entertainment": "#娛樂 #名人金句",
         "entertainment": "#娛樂 #熱搜",
+        "business_finance": "#商業判讀 #財經",
         "finance":       "#台股 #投資",
         "pet":           "#萌寵 #寵物",
         "generic":       "#新聞 #台灣",
@@ -588,12 +606,14 @@ def _resolve_tiktok_hashline(strategy: str, seed: int) -> str:
 
 # YouTube tags (comma-separated, no hashtag prefix) — 8-12 tags, IP-specific first
 _YOUTUBE_TAGS_BY_STRATEGY = {
+    "tech_judgement": "DORO科技判讀,AI新聞,科技趨勢,AI趨勢,科技解析,人工智慧,ChatGPT,OpenAI,NVIDIA,科技觀點,Doro",
     "tech":          "AI新聞,ChatGPT,Claude,Anthropic,AI工具,人工智慧,科技新聞,AI代理,生成式AI,Doro日報,每日AI",
     "tech_tutorial": "AI教學,AI工具,AItips,ChatGPT教學,Claude教學,AI實用,AI技巧,人工智慧應用,Doro日報,學AI",
     "quote_analysis": "名人語錄,AI思維,創業思維,vibecoding,科技觀點,產品思維,AI工作術,創辦人思維,Doro日報,每日觀點",
     "figure_tech": "黃仁勳,張忠謀,科技大咖,AI思維,創業思維,科技觀點,產品思維,AI工作術,Doro日報,名人金句",
     "figure_entertainment": "娛樂咖,名人金句,人生金句,台灣娛樂,訪談精華,明星訪談,娛樂觀點,Doro日報",
     "entertainment": "台灣娛樂,娛樂新聞,熱門話題,YT熱門,電競,電影預告,實況,娛樂懶人包,Doro日報,每日娛樂",
+    "business_finance": "商業判讀,商業模式,公司分析,科技財經,財經新聞,市場風險,訂閱制,AI商業,Doro日報,非投資建議",
     "finance":       "台股,財經新聞,投資,股市,理財,美股,ETF,財經懶人包,Doro日報,每日財經",
     "pet":           "萌寵,寵物日常,貓狗,療癒,可愛動物,pet,寵物頻道,Doro日報",
     "generic":       "台灣新聞,每日新聞,熱門話題,新聞懶人包,時事,Doro日報,每日懶人包",
@@ -606,12 +626,14 @@ _YOUTUBE_TAGS_BY_STRATEGY = {
 # in Taiwan market per 2026 TikTok Strategist audit. Keep true for pure AI/
 # tech news (no human footage).
 _IS_AIGC_BY_STRATEGY = {
+    "tech_judgement": True,
     "tech":          True,
     "tech_tutorial": True,
     "quote_analysis": True,
     "figure_tech": True,
     "figure_entertainment": False,
     "generic":       True,
+    "business_finance": True,
     "finance":       True,
     "entertainment": False,
     "pet":           False,
@@ -619,12 +641,14 @@ _IS_AIGC_BY_STRATEGY = {
 
 # Strategy-specific title hook formulas. {hook} = first item's hook, {n} = item count.
 _TITLE_FORMULA = {
+    "tech_judgement": "{hook}｜DORO 科技判讀",
     "tech":          "{hook}｜{n} 則 AI 大事一次看完",
     "tech_tutorial": "{hook}｜{n} 招 AI 技巧學起來",
     "quote_analysis": "{hook}｜一句話拆解 AI 時代的工作方式",
     "figure_tech": "{hook}｜科技大咖原片解析",
     "figure_entertainment": "{hook}｜娛樂咖原片解析",
     "entertainment": "{hook}｜今天台灣 {n} 件熱搜一次看",
+    "business_finance": "{hook}｜商業判讀",
     "finance":       "{hook}｜{n} 則市場焦點",
     "pet":           "{hook}｜{n} 個萌寵時刻",
     "generic":       "{hook}｜{n} 則今日重點",
@@ -632,40 +656,41 @@ _TITLE_FORMULA = {
 
 # Strategy-specific sign-off line at end of long descriptions.
 # 科技類（tech/tech_tutorial/finance）→ @_doro1998ai
-# 娛樂/生活類（entertainment/pet/generic）→ @_doro1998
+# 娛樂/生活類（entertainment/generic）→ @_doro1998；寵物/奶烙 → @_nailao1998
 _SIGNOFF = {
+    "tech_judgement": "追蹤 @_doro1998ai，每天看懂一件科技大事。",
     "tech":          "追蹤 @_doro1998ai 每天一則 AI 懶人包 🐾",
     "tech_tutorial": "想學更多 AI 技巧？追蹤 @_doro1998ai 每天教你一招 🐾",
     "quote_analysis": "想看更多 AI 思維拆解？追蹤 @_doro1998ai 每天一個觀點 🐾",
     "figure_tech": "想看更多科技大咖原片解析？追蹤 @_doro1998ai 每天拆一段 🐾",
     "figure_entertainment": "想看更多娛樂咖原片解析？追蹤 @_doro1998 每天拆一段 🐾",
     "entertainment": "追蹤 @_doro1998 每天一則娛樂懶人包 🐾",
+    "business_finance": "追蹤 @_doro1998ai 每天看懂一個商業模式。非投資建議，請自行查證風險。",
     "finance":       "追蹤 @_doro1998ai 每天一則財經懶人包 🐾",
-    "pet":           "追蹤 @_doro1998 每天一則萌寵日常 🐾",
+    "pet":           "追蹤 @_nailao1998 看奶烙今天又在幹嘛",
     "generic":       "追蹤 @_doro1998 每天一則重點懶人包 🐾",
 }
 
 
 def _compose_title(hooks: list[str], items: list[dict], strategy: str) -> str:
     """Hook-driven single-line title (v2). Replaces old 'A | B | C' pipe dump."""
-    first_hook = (hooks[0] or (items[0].get("title") if items else "") or "每日重點")[:18]
-    n = len([h for h in hooks if h])
-    template = _TITLE_FORMULA.get(strategy, _TITLE_FORMULA["generic"])
-    return template.format(hook=first_hook, n=max(n, 1))[:100]
+    return content_strategy.compose_title(hooks, items, strategy)
 
 
 # Strategy → ManyChat funnel CTA group. tech-ish strategies pull cta_kw_tech;
 # entertainment-ish pull cta_kw_entertain. Settings live in DB so user can
 # tune the keyword without redeploy.
 _STRATEGY_CTA_GROUP = {
+    "tech_judgement": "tech",
     "tech":          "tech",
     "tech_tutorial": "tech",
     "quote_analysis": "tech",
     "figure_tech": "tech",
+    "business_finance": "none",
     "finance":       "tech",
     "figure_entertainment": "entertain",
     "entertainment": "entertain",
-    "pet":           "entertain",
+    "pet":           "pet",
     "generic":       "entertain",
 }
 
@@ -695,6 +720,13 @@ _HEADER_POOL = {
         "🐾 Doro 娛樂日報",
         "🍿 你不能錯過的今天",
         "🎤 三條娛樂訊號",
+    ],
+    "pet": [
+        "🐾 奶烙今天在幹嘛",
+        "🐱 今天的貓",
+        "🐾 貓咪日常",
+        "🐱 奶烙小劇場",
+        "🐾 今日奶烙",
     ],
 }
 
@@ -822,15 +854,18 @@ def _compose_description(items: list[dict], strategy: str, signoff: bool = True)
     return f"{header}\n\n{body}{tail}"
 
 # Strategy → FB Page ID mapping.
-# Tech goes to 雙層甜甜圈; everything else (news, entertainment, pet) defaults to Mascot page.
+# Tech goes to 雙層甜甜圈; entertainment stays on the mascot page;
+# pet / 奶烙 now has its own Facebook page.
 _FB_PAGE_BY_STRATEGY = {
+    "tech_judgement": "1100141579843223",
     "tech":          "1100141579843223",   # 雙層甜甜圈
     "tech_tutorial": "1100141579843223",   # 雙層甜甜圈（同 tech）
     "quote_analysis": "1100141579843223",  # 名人語錄解析走科技帳號
     "figure_tech": "1100141579843223",     # 科技大咖原片解析
     "figure_entertainment": "1012830001921459",  # 娛樂咖原片解析
     "entertainment": "1012830001921459",   # Doro / Mascot
-    "pet":           "1012830001921459",   # same Mascot page for now (swap if 奶烙 gets own page)
+    "pet":           "1181556318367016",   # 奶烙出任務
+    "business_finance": "1100141579843223",
     "finance":       "1100141579843223",   # fallback to tech page (finance strategy dropped)
     "generic":       "1012830001921459",   # generic (news without specific strategy) → Mascot
 }
@@ -839,6 +874,8 @@ FACEBOOK_PAGE_ID_DEFAULT = _FB_PAGE_BY_STRATEGY["generic"]
 
 def _seed_platform_meta(news: dict) -> dict:
     """Build default per-platform meta from news.json items (option B: shared baseline)."""
+    return content_strategy.seed_platform_meta(news, get_setting=get_setting)
+
     items = news.get("items", [])
     if not items:
         titles    = [""]
@@ -870,14 +907,17 @@ def _seed_platform_meta(news: dict) -> dict:
     yt_tags_csv = _YOUTUBE_TAGS_BY_STRATEGY.get(strategy, _YOUTUBE_TAGS_BY_STRATEGY["generic"])
     fb_page_id  = _FB_PAGE_BY_STRATEGY.get(strategy,     FACEBOOK_PAGE_ID_DEFAULT)
     is_aigc     = _IS_AIGC_BY_STRATEGY.get(strategy,     True)
+    tech_judgement_short_only = strategy == "tech_judgement"
+    youtube_x_version = "short" if tech_judgement_short_only else "long"
+    use_custom_cover = not tech_judgement_short_only
 
     return {
         "youtube": {
-            "video_version":         "long",
+            "video_version":         youtube_x_version,
             "title":                 main_title,
             "description":           long_desc,
             "tags":                  yt_tags_csv,
-            "use_auto_thumbnail":    True,
+            "use_auto_thumbnail":    use_custom_cover,
             "categoryId":            "22",
             "defaultLanguage":       "zh-TW",
             "defaultAudioLanguage":  "zh-TW",
@@ -889,7 +929,7 @@ def _seed_platform_meta(news: dict) -> dict:
             "license":               "youtube",
         },
         "tiktok": {
-            "video_version":         "long",   # >60s qualifies for Creator Rewards ($0.50-1/1K views)
+            "video_version":         "short" if tech_judgement_short_only else "long",   # >60s qualifies for Creator Rewards ($0.50-1/1K views)
             # v2: ladder hashtags (1 huge + 3 niche + 2 micro), hook line on top
             "title":                 f"{main_title}\n\n{_tags('tiktok')}",
             "privacy_level":         "PUBLIC_TO_EVERYONE",
@@ -904,6 +944,7 @@ def _seed_platform_meta(news: dict) -> dict:
         },
         "instagram": {
             "video_version":         "short",
+            "use_auto_thumbnail":    use_custom_cover,
             "title":                 long_desc,           # v2: full IG-native caption body
             # v3: ManyChat funnel — CTA on top so the keyword is visible
             # before hashtag wall. ManyChat triggers on the keyword in user
@@ -929,7 +970,7 @@ def _seed_platform_meta(news: dict) -> dict:
             "threads_topic_tag":     "",
         },
         "x": {
-            "video_version":         "long",
+            "video_version":         youtube_x_version,
             # v2: tight 2-3 tags inline, under 280 chars hard cap
             "title":                 f"{main_title[:240]} {_tags('x')}"[:280],
             "poll_options":          "",
@@ -943,7 +984,7 @@ def _seed_platform_meta(news: dict) -> dict:
             # separate later step (per Jerry: 等 reach 起色再做).
             # NOTE: URL inside body IS clickable on LinkedIn (unlike IG), so
             # the CTA in long_desc already drives traffic well.
-            "video_version":         "long",
+            "video_version":         "short" if tech_judgement_short_only else "long",
             "title":                 main_title,
             "description":           long_desc,
             "visibility":            "PUBLIC",   # PUBLIC | CONNECTIONS | LOGGED_IN | CONTAINER
@@ -980,7 +1021,7 @@ def get_platform_meta(job_id: int):
         raise HTTPException(400, "news.json not found; cannot seed platform meta")
 
     news = _json.loads(news_file.read_text(encoding="utf-8"))
-    return _seed_platform_meta(news)
+    return content_strategy.seed_platform_meta(news, get_setting=get_setting)
 
 
 class PlatformMetaUpdate(BaseModel):

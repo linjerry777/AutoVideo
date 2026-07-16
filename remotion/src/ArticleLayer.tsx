@@ -14,6 +14,14 @@ export type ArticleVariant =
   | "flashcard";  // one bullet at a time, full-screen, swiped through
 
 const FONT_CJK = '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif';
+const safeHookText = (text: string) => (text || "").trim().replace(/\s+/g, "").slice(0, 11);
+const hookFontSize = (text: string) => {
+  const len = safeHookText(text).length;
+  if (len >= 10) return 148;
+  if (len >= 8) return 166;
+  if (len >= 6) return 190;
+  return 220;
+};
 
 export interface ArticleLayerProps {
   variant: ArticleVariant;
@@ -28,6 +36,7 @@ export interface ArticleLayerProps {
   accent: string;              // palette.accent
   glow: string;                // palette.glow (rgba)
   totalFrames: number;
+  openingLabel?: string;
 }
 
 /**
@@ -48,9 +57,14 @@ export interface ArticleLayerProps {
  *   - Holds full-screen for ~1s instead of 0.3s — gives viewer time to *read*
  *   - Smooth dissolve into Magazine/Breaking/Flashcard variant layout
  */
-const HookSlamIntro: React.FC<{ hook: string; accent: string }> = ({ hook, accent }) => {
+const HookSlamIntro: React.FC<{ hook: string; accent: string; openingLabel?: string }> = ({
+  hook,
+  accent,
+  openingLabel = "先看這個重點",
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const displayHook = safeHookText(hook);
 
   // Total intro length: 45 frames (1.5s @ 30fps). After that the variant takes over.
   if (frame >= 45) return null;
@@ -104,7 +118,7 @@ const HookSlamIntro: React.FC<{ hook: string; accent: string }> = ({ hook, accen
         style={{
           position: "absolute", inset: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "0 60px",
+          padding: "180px 76px 240px",
           opacity: exitOp,
           transform: `translate(0, ${exitY}px) scale(${scale})`,
           transformOrigin: "center center",
@@ -113,12 +127,13 @@ const HookSlamIntro: React.FC<{ hook: string; accent: string }> = ({ hook, accen
         <div
           style={{
             fontFamily: FONT_CJK,
-            fontSize: 220,
+            fontSize: hookFontSize(displayHook),
             fontWeight: 900,
             color: "#fff",
             textAlign: "center",
-            letterSpacing: 6,
+            letterSpacing: 0,
             lineHeight: 1.0,
+            maxWidth: 940,
             textShadow: `0 0 50px ${accent}cc, 0 0 100px ${accent}55, 0 8px 24px rgba(0,0,0,0.9)`,
             // Gold-tinted text gradient on the accent color word
             background: `linear-gradient(180deg, #ffffff 0%, ${accent} 100%)`,
@@ -127,8 +142,28 @@ const HookSlamIntro: React.FC<{ hook: string; accent: string }> = ({ hook, accen
             filter: `drop-shadow(0 4px 12px ${accent}77)`,
           }}
         >
-          {(hook || "").slice(0, 12)}
+          {displayHook}
         </div>
+      </div>
+      <div
+        style={{
+          position: "absolute",
+          left: 76,
+          right: 76,
+          bottom: 250,
+          opacity: interpolate(frame, [6, 16, 36, 45], [0, 1, 1, 0], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          }),
+          fontFamily: FONT_CJK,
+          fontSize: 44,
+          fontWeight: 800,
+          color: "#ffffff",
+          textAlign: "center",
+          textShadow: "0 4px 18px rgba(0,0,0,0.85)",
+        }}
+      >
+        {openingLabel}
       </div>
     </AbsoluteFill>
   );
@@ -194,7 +229,7 @@ export const ArticleLayer: React.FC<ArticleLayerProps> = (props) => {
   return (
     <>
       {variantEl}
-      <HookSlamIntro hook={props.hook} accent={props.accent} />
+      <HookSlamIntro hook={props.hook} accent={props.accent} openingLabel={props.openingLabel} />
       <LoopBackOutro hook={props.hook} accent={props.accent} totalFrames={props.totalFrames} />
     </>
   );

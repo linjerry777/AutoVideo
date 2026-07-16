@@ -172,8 +172,9 @@ export const NewsItemComponent: React.FC<NewsItemProps> = ({
           accent={palette.accent}
           glow={palette.glow}
           totalFrames={totalFrames}
+          openingLabel={item.opening_label}
         />
-        <Subtitle timing={item.timing} script={item.script} />
+        <Subtitle timing={item.timing} script={item.script} bottom={item.subtitle_bottom} />
       </AbsoluteFill>
     );
   }
@@ -434,7 +435,7 @@ export const NewsItemComponent: React.FC<NewsItemProps> = ({
       )}
 
       {/* Subtitle bar */}
-      <Subtitle timing={item.timing} script={item.script} />
+      <Subtitle timing={item.timing} script={item.script} bottom={item.subtitle_bottom} />
     </AbsoluteFill>
   );
 };

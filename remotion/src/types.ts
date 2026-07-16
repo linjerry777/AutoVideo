@@ -60,6 +60,10 @@ export interface NewsItem {
   audio: string;
   timing: TimingEntry[] | null;
   duration: number;
+  opening_label?: string;
+  subtitle_bottom?: number;
+  visual_change_seconds?: number;
+  hook_pattern?: string;
   // ── Article-card fields (populated by scripts/article_extractor.py) ──
   bullets?: string[];            // 3 金句 ≤15 字 each (from Claude enrich)
   hero_image_b64?: string;       // data-URL of the best article hero image

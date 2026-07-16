@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AutoVideo — AI 短影音自動化</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2316a34a'/%3E%3Cpath d='M24 18v28l24-14z' fill='white'/%3E%3C/svg%3E">
 <script src="https://cdn.tailwindcss.com"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
 <!-- tui-image-editor (MS-Paint-style screenshot editing). Versions pinned because /latest/ path
@@ -14,6 +15,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.2.0/fabric.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tui-color-picker@2.2.8/dist/tui-color-picker.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tui-image-editor@3.15.3/dist/tui-image-editor.min.js"></script>
+<script src="/ui/js/autovideo-ui.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -39,6 +41,12 @@
   .animate-pulse { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .animate-spin { animation: spin 1s linear infinite; }
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 </style>
 </head>
 <body class="bg-[#f9fafb] text-gray-900 h-full">
@@ -52,10 +60,10 @@
   <option value="warning">⚠️ 爭議/警告/風險</option>
   <option value="trophy">🏆 突破/獲獎/創紀錄</option>
 </datalist>
-<div x-data="app()" x-init="init(); $watch('page', (newPage) => { if (newPage !== 'upload') platformMeta = null })" x-cloak class="flex h-screen overflow-hidden">
+<div x-data="app()" x-init="init(); $watch('page', (newPage) => { if (newPage !== 'upload') platformMeta = window.AutoVideoUI?.emptyPlatformMeta(['youtube','tiktok','instagram','facebook','threads','x','linkedin']) || {} })" x-cloak class="flex h-screen overflow-hidden">
 
   <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
-  <aside class="w-[220px] shrink-0 flex flex-col bg-white border-r border-gray-200 h-screen">
+  <aside class="hidden md:flex w-[220px] shrink-0 flex-col bg-white border-r border-gray-200 h-screen">
 
     <!-- Logo -->
     <div class="px-5 pt-6 pb-5">
@@ -98,6 +106,14 @@
         <span x-show="page==='library'" class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-green-600 rounded-r-full"></span>
         <svg class="w-[15px] h-[15px] flex-shrink-0 transition-colors" :class="page==='library' ? 'text-green-600' : 'text-gray-400 group-hover:text-gray-600'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M10 9l5 3-5 3V9z"/></svg>
         <span class="font-medium" :class="page==='library' ? 'text-green-700' : ''">短片庫</span>
+      </button>
+
+      <button @click="page='storyboards'; loadStoryboards()"
+        class="group relative flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm transition-all duration-150"
+        :class="page==='storyboards' ? 'bg-green-50 text-green-700' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'">
+        <span x-show="page==='storyboards'" class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-green-600 rounded-r-full"></span>
+        <svg class="w-[15px] h-[15px] flex-shrink-0 transition-colors" :class="page==='storyboards' ? 'text-green-600' : 'text-gray-400 group-hover:text-gray-600'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h16M4 12h16M4 19h16"/><path stroke-linecap="round" stroke-linejoin="round" d="M7 3v18m10-18v18"/></svg>
+        <span class="font-medium" :class="page==='storyboards' ? 'text-green-700' : ''">分鏡池</span>
       </button>
 
       <button @click="page='accounts'; loadAccounts()"
@@ -150,13 +166,38 @@
   </aside>
 
   <!-- ── Main ───────────────────────────────────────────────────────── -->
-  <main class="flex-1 overflow-y-auto bg-[#f9fafb]">
+  <main class="flex-1 min-w-0 overflow-y-auto bg-[#f9fafb]">
+
+    <header class="md:hidden sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-gray-200">
+      <div class="flex items-center gap-2 px-4 py-3">
+        <div class="w-8 h-8 rounded-xl bg-green-600 flex items-center justify-center shrink-0">
+          <svg viewBox="0 0 24 24" fill="white" class="w-4 h-4"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <div class="min-w-0">
+          <p class="font-semibold text-sm text-gray-900">AutoVideo</p>
+          <p class="text-[10px] text-gray-400">AI 短影音平台</p>
+        </div>
+        <span class="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>運行中
+        </span>
+      </div>
+      <nav class="flex gap-2 overflow-x-auto px-3 pb-3" aria-label="手機導覽">
+        <button @click="page='dashboard'; loadDashboard()" :class="page==='dashboard' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">控制台</button>
+        <button @click="startNewVideo()" :class="page==='upload' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">生成影片</button>
+        <button @click="page='library'; loadMediaLibrary()" :class="page==='library' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">短片庫</button>
+        <button @click="page='storyboards'; loadStoryboards()" :class="page==='storyboards' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">分鏡池</button>
+        <button @click="page='accounts'; loadAccounts()" :class="page==='accounts' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">帳號</button>
+        <button @click="page='schedule'; loadSchedule()" :class="page==='schedule' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">排程</button>
+        <button @click="page='analytics'; loadAnalytics()" :class="page==='analytics' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">流量分析</button>
+        <button @click="page='settings'; loadSettings()" :class="page==='settings' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600'" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium">設定</button>
+      </nav>
+    </header>
 
     <!-- ── Dashboard ─────────────────────────────────────────────────── -->
-    <div x-show="page==='dashboard'" class="p-8 max-w-6xl mx-auto space-y-8">
+    <div x-show="page==='dashboard'" class="p-4 md:p-8 max-w-6xl mx-auto space-y-6 md:space-y-8">
 
       <!-- Header -->
-      <div class="flex items-center justify-between">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 class="text-2xl font-bold tracking-tight text-gray-900">控制台</h1>
           <p class="text-sm text-gray-500 mt-1">管理 AI 短影音生成流程</p>
@@ -286,32 +327,32 @@
             <p class="text-gray-400 text-sm">尚無記錄</p>
             <p class="text-gray-300 text-xs mt-1">開始生成第一支影片吧</p>
           </div>
-          <table x-show="jobs.length > 0" class="w-full text-sm">
+          <table x-show="jobs.length > 0" class="w-full table-fixed md:table-auto text-sm">
             <thead>
               <tr class="border-b border-gray-200">
-                <th class="px-3 py-3.5 text-[11px] text-gray-400 font-semibold" title="合輯勾選"></th>
-                <th class="text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">#</th>
-                <th class="text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">日期</th>
-                <th class="text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">主題</th>
-                <th class="text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">狀態</th>
-                <th class="text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">步驟</th>
-                <th class="px-5 py-3.5"></th>
+                <th class="w-10 px-2 md:px-3 py-3.5 text-[11px] text-gray-400 font-semibold" title="合輯勾選"></th>
+                <th class="w-14 text-left px-2 md:px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">#</th>
+                <th class="w-20 md:w-auto text-left px-2 md:px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">日期</th>
+                <th class="text-left px-2 md:px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">主題</th>
+                <th class="hidden md:table-cell text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">狀態</th>
+                <th class="hidden md:table-cell text-left px-5 py-3.5 text-[11px] text-gray-400 font-semibold uppercase tracking-wide">步驟</th>
+                <th class="hidden md:table-cell px-5 py-3.5"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
               <template x-for="j in jobs" :key="j.id">
                 <tr @click="openJob(j.id)" class="hover:bg-gray-50 transition-colors cursor-pointer group">
-                  <td class="px-3 py-3.5 text-center" @click.stop>
+                  <td class="px-2 md:px-3 py-3.5 text-center" @click.stop>
                     <input type="checkbox" :value="j.id" x-model.number="compileSelection"
                       :disabled="j.status !== 'done'"
                       class="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 disabled:opacity-30">
                   </td>
-                  <td class="px-5 py-3.5 text-xs text-gray-400 font-mono" x-text="'#'+j.id"></td>
-                  <td class="px-5 py-3.5 text-sm text-gray-600 font-mono tabular-nums" x-text="j.date"></td>
-                  <td class="px-5 py-3.5">
-                    <span class="text-sm text-gray-500 truncate max-w-[260px] block" x-text="j.display_topic || j.topic || 'AI 科技快訊'"></span>
+                  <td class="px-2 md:px-5 py-3.5 text-xs text-gray-400 font-mono" x-text="'#'+j.id"></td>
+                  <td class="px-2 md:px-5 py-3.5 text-[11px] md:text-sm text-gray-600 font-mono tabular-nums whitespace-nowrap" x-text="j.date"></td>
+                  <td class="px-2 md:px-5 py-3.5 min-w-0">
+                    <span class="text-xs md:text-sm text-gray-500 truncate md:max-w-[260px] block" x-text="j.display_topic || j.topic || 'AI 科技快訊'"></span>
                   </td>
-                  <td class="px-5 py-3.5">
+                  <td class="hidden md:table-cell px-5 py-3.5">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border"
                       :class="{
                         'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 ring-1 ring-emerald-500/10': j.status==='done',
@@ -324,7 +365,7 @@
                       <span x-text="{done:'完成',running:'執行中',failed:'失敗',queued:'排隊中',news_ready:'等待確認',cancelled:'已取消'}[j.status] ?? j.status"></span>
                     </span>
                   </td>
-                  <td class="px-5 py-3.5">
+                  <td class="hidden md:table-cell px-5 py-3.5">
                     <div class="flex gap-1 items-center">
                       <template x-for="key in ['news','screenshot','audio','video','upload']" :key="key">
                         <div :title="key" class="w-1.5 h-5 rounded-sm transition-colors"
@@ -337,7 +378,7 @@
                       </template>
                     </div>
                   </td>
-                  <td class="px-5 py-3.5 text-right">
+                  <td class="hidden md:table-cell px-5 py-3.5 text-right">
                     <span x-show="j.status==='done'" class="text-xs text-green-600 hover:text-green-700 font-medium opacity-0 group-hover:opacity-100 transition-opacity">預覽 →</span>
                   </td>
                 </tr>
@@ -574,6 +615,297 @@
       </div>
     </div>
 
+    <!-- Storyboard Pool -->
+    <div x-show="page==='storyboards'" class="h-full min-h-0 w-full max-w-none mx-0 flex flex-col gap-2 p-2 lg:p-3 overflow-hidden">
+      <div class="shrink-0 flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0">
+          <h1 class="text-lg font-bold tracking-tight text-gray-900">奶烙電影分鏡池</h1>
+          <p class="hidden text-xs text-gray-500 lg:block lg:line-clamp-1">搜尋影視片段與鏡頭語法；選定候選後產 9:16 分鏡，批准後才花 Seedance token。</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
+          <span class="rounded-lg border border-gray-200 bg-white px-2 py-1" x-text="'候選 ' + storyboards.length"></span>
+          <span class="rounded-lg border border-gray-200 bg-white px-2 py-1" x-text="'完整分鏡 ' + storyboards.filter(s => (s.image_count || 0) >= (s.frame_count || 0)).length"></span>
+          <span class="rounded-lg border border-gray-200 bg-white px-2 py-1" x-text="'影片完成 ' + storyboards.filter(s => s.status === 'video_ready').length"></span>
+          <span class="rounded-lg border border-gray-200 bg-white px-2 py-1" x-text="'Agent ' + (storyboardAgent?.status || 'idle')"></span>
+        </div>
+      </div>
+
+      <div x-show="storyboardLoading" class="py-20 text-center text-sm text-gray-400">載入分鏡池...</div>
+      <div x-show="!storyboardLoading && storyboards.length === 0" class="glass rounded-2xl py-20 text-center">
+        <p class="text-sm text-gray-500">還沒有候選。先搜尋片段，系統會挑影視鏡頭語法，再改寫成貓貓日常災難。</p>
+      </div>
+
+      <div x-show="!storyboardLoading && storyboards.length > 0"
+        class="grid flex-1 grid-cols-1 xl:grid-cols-[300px_minmax(0,1fr)] gap-3 min-h-0 overflow-hidden">
+        <aside class="glass rounded-2xl overflow-hidden min-h-0 flex flex-col">
+          <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <p class="text-sm font-semibold text-gray-900">候選</p>
+            <span class="text-xs text-gray-400" x-text="storyboards.length + ' 組'"></span>
+          </div>
+          <div class="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-100">
+            <template x-for="item in storyboards" :key="item.id">
+              <div class="group relative"
+                :class="selectedStoryboard?.id === item.id ? 'bg-green-50/80 ring-1 ring-inset ring-green-200' : 'bg-white hover:bg-gray-50'">
+                <button type="button" @click="selectStoryboard(item)"
+                  class="w-full text-left p-4 pr-12 transition">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="text-xs font-semibold text-green-600" x-text="'#' + item.id + ' · ' + (item.target_profile || 'entertainment_yt')"></p>
+                    <h2 class="mt-1 text-sm font-bold text-gray-900 leading-snug line-clamp-2" x-text="item.title"></h2>
+                    <p class="mt-1 text-[11px] text-gray-400 line-clamp-1" x-text="(item.reference_title || 'movie grammar') + ' · ' + (item.reference_scene || '')"></p>
+                    <p class="mt-1 text-[11px] text-gray-400 line-clamp-1" x-text="'來源：' + (item.source_title || item.source_name || 'local seed')"></p>
+                  </div>
+                  <span class="shrink-0 px-2 py-1 rounded-md text-[11px] font-semibold border"
+                    :class="storyboardStatusClass(item.status)" x-text="storyboardStatusLabel(item.status)"></span>
+                </div>
+                <div class="mt-3 flex flex-wrap gap-1.5 text-[11px] text-gray-500">
+                  <span class="px-2 py-1 rounded-md bg-white border border-gray-200" x-text="item.frame_count + ' 格'"></span>
+                  <span class="px-2 py-1 rounded-md border"
+                    :class="(item.image_count || 0) >= (item.frame_count || 0) ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-red-50 text-red-600 border-red-100'"
+                    x-text="(item.image_count || 0) + '/' + (item.frame_count || 0) + ' 圖'"></span>
+                  <span class="px-2 py-1 rounded-md bg-white border border-gray-200" x-text="item.estimated_seconds + 's'"></span>
+                    <span class="px-2 py-1 rounded-md bg-amber-50 text-amber-700 border border-amber-100" x-text="'Ops ' + item.media_ops_score"></span>
+                  </div>
+                </button>
+                <button type="button" @click.stop="deleteStoryboardCandidate(item)"
+                  class="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-gray-300 opacity-0 transition hover:border-red-100 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+                  title="刪除候選">
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12M10 11v6m4-6v6M9 7l1-2h4l1 2m-8 0 1 13h8l1-13"/>
+                  </svg>
+                </button>
+              </div>
+            </template>
+          </div>
+        </aside>
+
+        <section class="glass rounded-2xl overflow-hidden min-w-0 min-h-0 flex flex-col" x-show="selectedStoryboard">
+          <div class="shrink-0 px-3 py-1.5 border-b border-gray-100">
+            <div class="flex flex-col gap-1.5 lg:flex-row lg:items-start lg:justify-between">
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-green-600" x-text="'#' + selectedStoryboard?.id + ' · ' + (selectedStoryboard?.target_profile || 'entertainment_yt')"></p>
+                <h2 class="text-base font-bold text-gray-900 leading-tight line-clamp-1" x-text="selectedStoryboard?.title"></h2>
+                <p class="hidden" x-text="selectedStoryboard?.hook"></p>
+                <div class="mt-1 flex min-w-0 flex-wrap gap-1.5 text-[11px] text-gray-500">
+                  <span class="max-w-[520px] truncate rounded-lg border border-gray-100 bg-gray-50 px-2 py-1 font-medium text-gray-700"
+                    x-text="'語法：' + (selectedStoryboard?.reference_title || '未指定') + (selectedStoryboard?.reference_scene ? ' · ' + selectedStoryboard.reference_scene : '')"></span>
+                  <a x-show="storyboardHasSourceUrl(selectedStoryboard)" :href="selectedStoryboard?.source_url" target="_blank" rel="noreferrer"
+                    class="max-w-[520px] truncate rounded-lg border border-green-100 bg-green-50 px-2 py-1 font-medium text-green-700 hover:text-green-800"
+                    x-text="'來源：' + (selectedStoryboard?.source_title || selectedStoryboard?.source_name || selectedStoryboard?.source_url)"></a>
+                  <span x-show="!storyboardHasSourceUrl(selectedStoryboard)"
+                    class="max-w-[520px] truncate rounded-lg border border-gray-100 bg-gray-50 px-2 py-1 font-medium text-gray-700"
+                    x-text="'來源：' + (selectedStoryboard?.source_title || selectedStoryboard?.source_name || 'local seed')"></span>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+                <button @click="regenerateStoryboardFrames(selectedStoryboard)" :disabled="storyboardRegenerating"
+                  :class="storyboardRegenerating ? 'opacity-50 cursor-not-allowed' : 'hover:border-green-300 hover:text-green-700'"
+                  class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 transition">重生整組</button>
+                <button @click="renderStoryboardVideo(selectedStoryboard)" :disabled="storyboardRendering || (selectedStoryboard?.image_count || 0) < (selectedStoryboard?.frame_count || 0)"
+                  :class="storyboardRendering || (selectedStoryboard?.image_count || 0) < (selectedStoryboard?.frame_count || 0) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-800'"
+                  class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-900 text-white transition">批准生影片</button>
+                <button @click="setStoryboardStatus(selectedStoryboard, 'archived')"
+                  class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:border-gray-300 transition">封存</button>
+                <button @click="deleteStoryboardCandidate(selectedStoryboard)"
+                  class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-red-100 text-red-600 hover:bg-red-50 transition">刪除</button>
+              </div>
+            </div>
+            <div class="mt-1 flex flex-wrap gap-1.5 text-xs text-gray-500">
+              <span class="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-200" x-text="'分鏡 ' + selectedStoryboard?.frame_count + ' 張'"></span>
+              <span class="px-2 py-0.5 rounded-md border"
+                :class="(selectedStoryboard?.image_count || 0) >= (selectedStoryboard?.frame_count || 0) ? 'bg-sky-50 text-sky-700 border-sky-100' : 'bg-red-50 text-red-600 border-red-100'"
+                x-text="'Image2 ' + (selectedStoryboard?.image_count || 0) + '/' + (selectedStoryboard?.frame_count || 0)"></span>
+              <span class="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-200" x-text="'預估 ' + selectedStoryboard?.estimated_seconds + 's'"></span>
+              <span class="px-2 py-0.5 rounded-md bg-gray-50 border border-gray-200" x-text="'約 $' + Number(selectedStoryboard?.estimated_cost_usd || 0).toFixed(2)"></span>
+              <span class="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-100" x-text="'Media Ops ' + selectedStoryboard?.media_ops_score"></span>
+            </div>
+          </div>
+
+          <div class="grid flex-1 min-h-0 grid-cols-1 overflow-hidden"
+            :class="storyboardInspectorOpen ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)]'">
+            <div class="bg-[#05070b] min-h-0 flex flex-col overflow-hidden">
+              <div class="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#070b12] px-3 py-1.5">
+                <div class="inline-flex rounded-xl bg-white/5 p-1 text-xs font-semibold text-gray-300">
+                  <button type="button" @click="storyboardViewMode='storyboard'"
+                    :class="storyboardViewMode === 'storyboard' ? 'bg-white text-gray-900 shadow-sm' : 'hover:text-white'"
+                    class="rounded-lg px-3 py-1.5 transition">分鏡</button>
+                  <button type="button" x-show="storyboardSegmentCount(selectedStoryboard) > 0" @click="storyboardViewMode='segments'"
+                    :class="storyboardViewMode === 'segments' ? 'bg-white text-gray-900 shadow-sm' : 'hover:text-white'"
+                    class="rounded-lg px-3 py-1.5 transition">分段影片</button>
+                  <button type="button" x-show="selectedStoryboard?.output_video_url" @click="storyboardViewMode='video'"
+                    :class="storyboardViewMode === 'video' ? 'bg-white text-gray-900 shadow-sm' : 'hover:text-white'"
+                    class="rounded-lg px-3 py-1.5 transition">影片</button>
+                </div>
+                <div class="flex items-center gap-2 text-[11px] text-gray-400">
+                  <span x-text="(selectedStoryboard?.image_count || 0) + '/' + (selectedStoryboard?.frame_count || 0) + ' 張分鏡'"></span>
+                  <button type="button" @click="storyboardInspectorOpen = !storyboardInspectorOpen"
+                    class="rounded-lg border border-white/10 px-2.5 py-1.5 font-semibold text-gray-200 hover:bg-white/10"
+                    x-text="storyboardInspectorOpen ? '收合鏡頭表' : '打開鏡頭表'"></button>
+                </div>
+              </div>
+              <div class="min-h-0 flex-1 overflow-x-auto overflow-y-auto p-3 lg:p-4">
+                <template x-if="storyboardViewMode === 'storyboard' && selectedStoryboard?.sheet_image_url && (selectedStoryboard?.image_count || 0) < (selectedStoryboard?.frame_count || 0)">
+                  <div class="flex h-full min-w-full justify-center overflow-y-auto">
+                    <img :src="selectedStoryboard?.sheet_image_url" class="h-auto w-full max-w-[780px] self-start rounded-xl bg-black object-contain">
+                  </div>
+                </template>
+                <template x-if="storyboardViewMode === 'video' && selectedStoryboard?.output_video_url">
+                  <div class="flex h-full w-full items-center justify-center">
+                    <video :src="selectedStoryboard?.output_video_url" controls class="h-full max-h-[calc(100vh-250px)] aspect-[9/16] rounded-lg bg-black"></video>
+                  </div>
+                </template>
+                <template x-if="storyboardViewMode === 'segments'">
+                  <div class="grid min-w-full grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    <template x-for="frame in selectedStoryboard?.frames || []" :key="'segment-' + frame.id">
+                      <div class="overflow-hidden rounded-xl border border-white/10 bg-black">
+                        <div class="aspect-[9/16] bg-black">
+                          <video x-show="frame.video_url" :src="frame.video_url" controls class="h-full w-full object-contain"></video>
+                          <button x-show="!frame.video_url" type="button" @click="openStoryboardFrame(selectedStoryboard, frame)"
+                            class="flex h-full w-full items-center justify-center text-xs text-gray-500 hover:text-gray-300">尚未產生分段影片</button>
+                        </div>
+                        <div class="flex items-center justify-between gap-2 border-t border-white/10 px-3 py-2">
+                          <div class="min-w-0">
+                            <p class="truncate text-xs font-semibold text-white" x-text="frame.frame_index + '. ' + frame.title"></p>
+                            <p class="mt-0.5 text-[11px] text-gray-500" x-text="(frame.video_status || 'pending') + ' · ' + '4s'"></p>
+                          </div>
+                          <button type="button" @click="openStoryboardFrame(selectedStoryboard, frame)"
+                            class="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[11px] font-semibold text-gray-200 hover:bg-white/10">編輯</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="storyboardViewMode === 'storyboard' && !(selectedStoryboard?.sheet_image_url && (selectedStoryboard?.image_count || 0) < (selectedStoryboard?.frame_count || 0))">
+                  <div class="flex min-h-full min-w-max items-start gap-4 pb-4">
+                      <template x-for="frame in selectedStoryboard?.frames || []" :key="frame.id">
+                        <button type="button" @click="openStoryboardFrame(selectedStoryboard, frame)"
+                          class="group relative h-[min(72vh,820px)] max-h-[calc(100vh-270px)] w-[260px] shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black text-left sm:w-[300px] lg:w-[340px] xl:w-[360px]">
+                          <img x-show="frame.image_url" :src="frame.image_url" class="h-full w-full object-cover transition group-hover:scale-[1.02]" loading="lazy">
+                          <div x-show="!frame.image_url" class="h-full aspect-[9/16] flex items-center justify-center bg-black text-xs text-gray-500">未產圖</div>
+                          <div class="absolute inset-x-0 bottom-0 bg-black/70 px-2 py-1">
+                            <p class="truncate text-[11px] font-semibold text-white" x-text="frame.frame_index + '. ' + frame.title"></p>
+                          </div>
+                        </button>
+                      </template>
+                  </div>
+                </template>
+              </div>
+              <div class="hidden shrink-0 border-t border-white/10 bg-[#070b12] px-4 py-3">
+                <div class="flex gap-2 overflow-x-auto pb-2">
+                  <template x-for="frame in selectedStoryboard?.frames || []" :key="'strip-' + frame.id">
+                    <button type="button" @click="openStoryboardFrame(selectedStoryboard, frame)"
+                      class="relative h-28 w-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black">
+                      <img x-show="frame.image_url" :src="frame.image_url" class="h-full w-full object-cover" loading="lazy">
+                      <span class="absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white" x-text="frame.shot_code || frame.frame_index"></span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+            <div x-show="storyboardInspectorOpen" x-transition
+              class="border-t xl:border-t-0 xl:border-l border-gray-100 bg-white min-h-0 overflow-y-auto">
+              <div class="sticky top-0 z-10 bg-white/95 backdrop-blur px-3 py-2 border-b border-gray-100">
+                <p class="text-xs font-semibold text-gray-400 uppercase">鏡頭表</p>
+                <p class="mt-1 text-[11px] text-gray-500">點一格改 prompt 或只重生該格。</p>
+              </div>
+              <div class="divide-y divide-gray-100">
+                <template x-for="frame in selectedStoryboard?.frames || []" :key="frame.id">
+                  <button type="button" @click="openStoryboardFrame(selectedStoryboard, frame)"
+                    class="w-full p-3 text-left hover:bg-gray-50 transition">
+                    <div class="flex items-start gap-2">
+                      <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-[11px] font-semibold text-white"
+                        x-text="frame.shot_code || frame.frame_index"></span>
+                      <div class="h-14 w-9 shrink-0 overflow-hidden rounded-md bg-gray-100">
+                        <img x-show="frame.image_url" :src="frame.image_url" class="h-full w-full object-cover" loading="lazy">
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex items-start justify-between gap-2">
+                          <p class="text-sm font-semibold text-gray-900" x-text="frame.frame_index + '. ' + frame.title"></p>
+                          <span class="shrink-0 rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500"
+                            x-text="'4s'"></span>
+                        </div>
+                        <p class="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500" x-text="frame.visual_prompt"></p>
+                        <p class="mt-1 text-[11px] text-gray-400" x-text="(frame.status || 'planned') + (frame.video_status ? ' · ' + frame.video_status : '')"></p>
+                      </div>
+                    </div>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div x-show="selectedStoryboardFrame?.id" x-cloak
+        class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+        @click.self="selectedStoryboardFrame={}">
+        <div class="w-full max-w-6xl max-h-[92vh] rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden">
+          <div class="flex items-start justify-between gap-4 p-5 border-b border-gray-100">
+            <div>
+              <p class="text-xs font-semibold text-green-600" x-text="selectedStoryboard?.title"></p>
+              <h2 class="text-lg font-bold text-gray-900 mt-1" x-text="(selectedStoryboardFrame?.shot_code ? selectedStoryboardFrame.shot_code + ' · ' : '') + selectedStoryboardFrame?.title"></h2>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <button @click="goStoryboardFrame(-1)" :disabled="!hasStoryboardFrameOffset(-1)"
+                :class="!hasStoryboardFrameOffset(-1) ? 'opacity-40 cursor-not-allowed' : 'hover:border-gray-300 hover:text-gray-900'"
+                class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 transition">上一張</button>
+              <span class="hidden sm:inline text-xs text-gray-400 tabular-nums" x-text="storyboardFramePositionLabel()"></span>
+              <button @click="goStoryboardFrame(1)" :disabled="!hasStoryboardFrameOffset(1)"
+                :class="!hasStoryboardFrameOffset(1) ? 'opacity-40 cursor-not-allowed' : 'hover:border-gray-300 hover:text-gray-900'"
+                class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 transition">下一張</button>
+              <button @click="selectedStoryboardFrame={}" class="w-9 h-9 rounded-full border border-gray-200 text-gray-400 hover:text-gray-700">×</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-[360px_1fr] max-h-[calc(92vh-82px)]">
+            <div class="bg-black overflow-y-auto">
+              <img x-show="selectedStoryboardFrame?.image_url" :src="selectedStoryboardFrame?.image_url" class="w-full aspect-[9/16] object-contain">
+              <div x-show="!selectedStoryboardFrame?.image_url" class="aspect-[9/16] flex items-center justify-center text-sm text-gray-500">這格還沒產圖</div>
+              <video x-show="selectedStoryboardFrame?.video_url" :src="selectedStoryboardFrame?.video_url" controls class="w-full border-t border-white/10"></video>
+            </div>
+            <div class="p-5 space-y-4 overflow-y-auto">
+              <div x-show="selectedStoryboardFrame?.id" class="grid grid-cols-1 md:grid-cols-[1fr_120px] gap-3">
+                <label class="block">
+                  <span class="text-xs font-semibold text-gray-400">分鏡標題</span>
+                  <input x-model="selectedStoryboardFrame.title" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-400">
+                </label>
+                <label class="block">
+                  <span class="text-xs font-semibold text-gray-400">生成秒數</span>
+                  <input value="4" type="number" disabled class="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none">
+                </label>
+              </div>
+              <div>
+                <p class="text-xs font-semibold text-gray-400 mb-2">Image2 Prompt</p>
+                <textarea x-model="selectedStoryboardFrame.visual_prompt" rows="8"
+                  class="w-full resize-y whitespace-pre-wrap text-xs leading-relaxed text-gray-700 bg-gray-50 border border-gray-100 rounded-xl p-4 outline-none focus:border-green-400"></textarea>
+              </div>
+              <div>
+                <p class="text-xs font-semibold text-gray-400 mb-2">Seedance Prompt</p>
+                <textarea x-model="selectedStoryboardFrame.seedance_prompt" rows="7"
+                  class="w-full resize-y whitespace-pre-wrap text-xs leading-relaxed text-gray-700 bg-gray-50 border border-gray-100 rounded-xl p-4 outline-none focus:border-green-400"></textarea>
+              </div>
+              <div>
+                <p class="text-xs font-semibold text-gray-400 mb-2">Sound Prompt</p>
+                <textarea x-model="selectedStoryboardFrame.sound_prompt" rows="4"
+                  class="w-full resize-y whitespace-pre-wrap text-xs leading-relaxed text-gray-700 bg-gray-50 border border-gray-100 rounded-xl p-4 outline-none focus:border-green-400"></textarea>
+              </div>
+              <div class="flex flex-wrap items-center justify-end gap-2 border-t border-gray-100 pt-4">
+                <button x-show="selectedStoryboardFrame?.id" @click="saveStoryboardFrame()" :disabled="storyboardRegenerating"
+                  class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-700 hover:border-gray-300 transition">儲存 prompt</button>
+                <button x-show="selectedStoryboardFrame?.id" @click="regenerateStoryboardFrame()" :disabled="storyboardRegenerating"
+                  :class="storyboardRegenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-700'"
+                  class="px-3 py-2 rounded-xl text-xs font-semibold bg-green-600 text-white transition">重生該分鏡圖</button>
+                <button x-show="selectedStoryboardFrame?.id" @click="regenerateStoryboardFrameVideo()" :disabled="storyboardSegmentRendering || storyboardRegenerating || !selectedStoryboardFrame?.image_url || selectedStoryboardFrame?.video_status === 'rendering'"
+                  :class="(storyboardSegmentRendering || storyboardRegenerating || !selectedStoryboardFrame?.image_url || selectedStoryboardFrame?.video_status === 'rendering') ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-800'"
+                  class="px-3 py-2 rounded-xl text-xs font-semibold bg-gray-900 text-white transition">重生該分段影片</button>
+                <button @click="selectedStoryboardFrame={}"
+                  class="px-3 py-2 rounded-xl text-xs font-semibold bg-gray-900 text-white hover:bg-gray-800 transition">完成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div x-show="page==='new'" class="p-8 max-w-3xl mx-auto">
 
       <!-- Header (always visible) -->
@@ -646,6 +978,7 @@
               ['tech',          '🔬', '科技',   '腳本 80-110 字 · 先說結論 · 自動發 YT+TT+X'],
               ['quote_analysis','🧠', '語錄解析', '腳本 70-100 字 · 名人觀點拆解 · 自動發 YT+IG+FB+X'],
               ['entertainment', '🎭', '娛樂',   '腳本 30-50 字 · 情緒衝擊 · 自動發 TT+IG+FB'],
+              ['business_finance','📊', '商業判讀', '腳本 80-110 字 · 商業模式/風險 · 自動發 YT+FB'],
               ['finance',       '💰', '財經',   '腳本 80-110 字 · 數字衝擊 · 自動發 YT+X'],
               ['pet',           '🤖', 'AI寵物', '腳本 40-60 字 · 可愛互動 · 自動發 TT+IG+FB']
             ]" :key="id">
@@ -905,6 +1238,7 @@
               tech:          '🔬 科技 · 腳本 80-110 字 · 預設發 YouTube+TikTok+X',
               quote_analysis:'🧠 語錄解析 · 腳本 70-100 字 · 名人觀點拆解 · 預設發 YT+IG+FB+X',
               entertainment: '🎭 娛樂 · 腳本 30-50 字 · 預設發 TikTok+IG+Facebook',
+              business_finance:'📊 商業判讀 · 腳本 80-110 字 · 預設發 YouTube+Facebook',
               finance:       '💰 財經 · 腳本 80-110 字 · 預設發 YouTube+X',
               pet:           '🤖 AI寵物 · 腳本 40-60 字 · 預設發 TikTok+IG+Facebook'
             })[strategy] || '預設策略'"></span>
@@ -917,7 +1251,7 @@
               :class="layoutMode === 'visual' ? 'ring-2 ring-green-500 rounded-xl' : ''">
               <input type="radio" x-model="layoutMode" value="visual" @change="saveLayoutMode()" class="sr-only">
               <div class="flex items-center gap-3 border border-gray-200 rounded-xl p-2 group-hover:border-gray-300">
-                <img src="/static/preview/visual.jpg" class="w-14 h-24 object-cover rounded-md" alt="visual preview">
+                <img src="/ui/preview/visual.jpg" class="w-14 h-24 object-cover rounded-md" alt="visual preview">
                 <div class="flex-1">
                   <p class="text-sm font-medium text-gray-700">🎬 視覺優先</p>
                   <p class="text-[10px] text-gray-400 leading-tight">新聞圖片填滿畫面<br>像新聞台風格</p>
@@ -928,7 +1262,7 @@
               :class="layoutMode === 'text' ? 'ring-2 ring-green-500 rounded-xl' : ''">
               <input type="radio" x-model="layoutMode" value="text" @change="saveLayoutMode()" class="sr-only">
               <div class="flex items-center gap-3 border border-gray-200 rounded-xl p-2 group-hover:border-gray-300">
-                <img src="/static/preview/text.jpg" class="w-14 h-24 object-cover rounded-md" alt="text preview">
+                <img src="/ui/preview/text.jpg" class="w-14 h-24 object-cover rounded-md" alt="text preview">
                 <div class="flex-1">
                   <p class="text-sm font-medium text-gray-700">✨ 文字優先</p>
                   <p class="text-[10px] text-gray-400 leading-tight">彩色漸層背景<br>文字卡片風格</p>
@@ -1114,14 +1448,14 @@
                 <p class="text-xs font-semibold text-gray-500">封面縮圖 (1080×1920)</p>
                 <span class="text-[10px] text-gray-400">(YouTube 會用這張；TikTok/IG/FB 自動從影片抽)</span>
               </div>
-              <a :href="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/thumbnail?t=' + encodeURIComponent(currentJob?.finished_at || currentJob?.id)"
+              <a :href="currentJob ? '/api/media/jobs/' + currentJob.id + '/thumbnail?t=' + encodeURIComponent(currentJob.finished_at || currentJob.id) : '#'"
                  download="thumbnail.png"
                  class="text-xs text-green-600 hover:text-green-700 border border-green-200 rounded-lg px-3 py-1">
                 下載
               </a>
             </div>
             <img x-show="thumbOk"
-                 :src="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/thumbnail?t=' + encodeURIComponent(currentJob?.finished_at || currentJob?.id)"
+                 :src="currentJob ? '/api/media/jobs/' + currentJob.id + '/thumbnail?t=' + encodeURIComponent(currentJob.finished_at || currentJob.id) : null"
                  class="w-full max-h-80 object-contain bg-black"
                  @error="thumbOk = false"
                  alt="thumbnail">
@@ -1152,7 +1486,7 @@
                   </button>
                 </div>
                 <video controls class="w-full max-h-80 bg-black"
-                  :src="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/video?v=' + currentJobVersion + '&t=' + encodeURIComponent((currentJob?.finished_at || currentJob?.id) + ':' + currentJobVersion)"></video>
+                  :src="currentJob ? '/api/media/jobs/' + currentJob.id + '/video?v=' + currentJobVersion + '&t=' + encodeURIComponent((currentJob.finished_at || currentJob.id) + ':' + currentJobVersion) : null"></video>
               </div>
             </template>
           </div>
@@ -1456,6 +1790,7 @@
             tech:          '🔬 科技 · 腳本 80-110 字 · 預設發 YouTube+TikTok+X',
             quote_analysis:'🧠 語錄解析 · 腳本 70-100 字 · 名人觀點拆解 · 預設發 YT+IG+FB+X',
             entertainment: '🎭 娛樂 · 腳本 30-50 字 · 預設發 TikTok+IG+Facebook',
+            business_finance:'📊 商業判讀 · 腳本 80-110 字 · 預設發 YouTube+Facebook',
             finance:       '💰 財經 · 腳本 80-110 字 · 預設發 YouTube+X',
             pet:           '🤖 AI寵物 · 腳本 40-60 字 · 預設發 TikTok+IG+Facebook'
           })[strategy] || '預設策略'"></span>
@@ -1468,7 +1803,7 @@
             :class="layoutMode === 'visual' ? 'ring-2 ring-green-500 rounded-xl' : ''">
             <input type="radio" x-model="layoutMode" value="visual" @change="saveLayoutMode()" class="sr-only">
             <div class="flex items-center gap-3 border border-gray-200 rounded-xl p-2 group-hover:border-gray-300">
-              <img src="/static/preview/visual.jpg" class="w-14 h-24 object-cover rounded-md" alt="visual preview">
+              <img src="/ui/preview/visual.jpg" class="w-14 h-24 object-cover rounded-md" alt="visual preview">
               <div class="flex-1">
                 <p class="text-sm font-medium text-gray-700">🎬 視覺優先</p>
                 <p class="text-[10px] text-gray-400 leading-tight">新聞圖片填滿畫面<br>像新聞台風格</p>
@@ -1479,7 +1814,7 @@
             :class="layoutMode === 'text' ? 'ring-2 ring-green-500 rounded-xl' : ''">
             <input type="radio" x-model="layoutMode" value="text" @change="saveLayoutMode()" class="sr-only">
             <div class="flex items-center gap-3 border border-gray-200 rounded-xl p-2 group-hover:border-gray-300">
-              <img src="/static/preview/text.jpg" class="w-14 h-24 object-cover rounded-md" alt="text preview">
+              <img src="/ui/preview/text.jpg" class="w-14 h-24 object-cover rounded-md" alt="text preview">
               <div class="flex-1">
                 <p class="text-sm font-medium text-gray-700">✨ 文字優先</p>
                 <p class="text-[10px] text-gray-400 leading-tight">彩色漸層背景<br>文字卡片風格</p>
@@ -1639,14 +1974,14 @@
               <p class="text-xs font-semibold text-gray-500">封面縮圖 (1080×1920)</p>
               <span class="text-[10px] text-gray-400">(YouTube 會用這張；TikTok/IG/FB 自動從影片抽)</span>
             </div>
-            <a :href="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/thumbnail?t=' + encodeURIComponent(currentJob?.finished_at || currentJob?.id)"
+            <a :href="currentJob ? '/api/media/jobs/' + currentJob.id + '/thumbnail?t=' + encodeURIComponent(currentJob.finished_at || currentJob.id) : '#'"
                download="thumbnail.png"
                class="text-xs text-green-600 hover:text-green-700 border border-green-200 rounded-lg px-3 py-1">
               下載
             </a>
           </div>
           <img x-show="thumbOk"
-               :src="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/thumbnail?t=' + encodeURIComponent(currentJob?.finished_at || currentJob?.id)"
+               :src="currentJob ? '/api/media/jobs/' + currentJob.id + '/thumbnail?t=' + encodeURIComponent(currentJob.finished_at || currentJob.id) : null"
                class="w-full max-h-80 object-contain bg-black"
                @error="thumbOk = false"
                alt="thumbnail">
@@ -1677,7 +2012,7 @@
                 </button>
               </div>
               <video controls class="w-full max-h-96 bg-black"
-                :src="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/video?v=' + currentJobVersion + '&t=' + encodeURIComponent((currentJob?.finished_at || currentJob?.id) + ':' + currentJobVersion)"></video>
+                :src="currentJob ? '/api/media/jobs/' + currentJob.id + '/video?v=' + currentJobVersion + '&t=' + encodeURIComponent((currentJob.finished_at || currentJob.id) + ':' + currentJobVersion) : null"></video>
             </div>
           </template>
         </div>
@@ -1808,7 +2143,7 @@
             <!-- Video thumbnail (shared across all cards) -->
             <div class="relative aspect-[9/16] bg-black mx-auto" style="max-width:280px">
               <img x-show="currentJob"
-                   :src="'http://localhost:9000/api/media/jobs/' + currentJob?.id + '/thumbnail?t=' + encodeURIComponent(currentJob?.finished_at || currentJob?.id)"
+                   :src="currentJob ? '/api/media/jobs/' + currentJob.id + '/thumbnail?t=' + encodeURIComponent(currentJob.finished_at || currentJob.id) : null"
                    class="w-full h-full object-cover"
                    @error="$event.target.style.display='none'"
                    alt="thumbnail">
@@ -1937,7 +2272,7 @@
                 標題 / 文案 <span class="text-gray-400"
                   x-text="'(' + (platformMeta[editingPlatform]?.title || '').length + ' 字)'"></span>
               </label>
-              <textarea x-model="platformMeta[editingPlatform].title" rows="3"
+              <textarea x-model="platformMeta[editingPlatform || 'youtube'].title" rows="3"
                 class="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"></textarea>
               <p x-show="editingPlatform==='x'" class="text-[10px] text-gray-400 mt-1">X 單則貼文最多 280 字</p>
               <p x-show="editingPlatform==='tiktok'" class="text-[10px] text-gray-400 mt-1">TikTok caption 含 #hashtag 最多 2200 字</p>
@@ -1946,14 +2281,14 @@
             <!-- YouTube/Facebook: description -->
             <div x-show="['youtube','facebook'].includes(editingPlatform)">
               <label class="text-xs font-medium text-gray-500 block mb-1">影片描述</label>
-              <textarea x-model="platformMeta[editingPlatform].description" rows="5"
+              <textarea x-model="platformMeta[editingPlatform || 'youtube'].description" rows="5"
                 class="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"></textarea>
             </div>
 
             <!-- YouTube: tags -->
             <div x-show="editingPlatform==='youtube'">
               <label class="text-xs font-medium text-gray-500 block mb-1">標籤（逗號分隔）</label>
-              <input x-model="platformMeta[editingPlatform].tags" type="text"
+              <input x-model="platformMeta[editingPlatform || 'youtube'].tags" type="text"
                 placeholder="AI,人工智慧,科技"
                 class="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500">
             </div>
@@ -1961,8 +2296,8 @@
             <!-- YouTube: auto thumbnail toggle -->
             <div x-show="editingPlatform==='youtube'" class="flex items-center gap-2">
               <input type="checkbox" id="yt-thumb"
-                :checked="platformMeta[editingPlatform].use_auto_thumbnail"
-                @change="platformMeta[editingPlatform].use_auto_thumbnail = $event.target.checked"
+                :checked="platformMeta[editingPlatform || 'youtube'].use_auto_thumbnail"
+                @change="platformMeta[editingPlatform || 'youtube'].use_auto_thumbnail = $event.target.checked"
                 class="accent-green-500">
               <label for="yt-thumb" class="text-xs text-gray-700">
                 使用自動生成的封面縮圖（1080×1920）
@@ -1974,7 +2309,7 @@
               <label class="text-xs font-medium text-gray-500 block mb-1">
                 首條留言（自動發布 hashtag，避免洗版 caption）
               </label>
-              <textarea x-model="platformMeta[editingPlatform].first_comment" rows="2"
+              <textarea x-model="platformMeta[editingPlatform || 'youtube'].first_comment" rows="2"
                 placeholder="#AI #人工智慧 #科技新聞"
                 class="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"></textarea>
             </div>
@@ -2581,13 +2916,22 @@
           <h2 class="text-2xl font-bold text-gray-900">流量分析</h2>
           <p class="text-sm text-gray-500 mt-1">每支影片表現、平台回收、封面與 hook 復盤。</p>
         </div>
-        <button @click="refreshAnalytics()" :disabled="analyticsRefreshing"
-          class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white transition-all">
-          <svg class="w-4 h-4" :class="analyticsRefreshing ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5.6 15A7 7 0 0017 18.2M18.4 9A7 7 0 007 5.8"/>
-          </svg>
-          <span x-text="analyticsRefreshing ? '全量抓取中...' : '全量抓取已發影片'"></span>
-        </button>
+        <div class="flex flex-wrap gap-2">
+          <button @click="runMediaAgent()" :disabled="mediaAgentRunning"
+            class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-gray-900 hover:bg-gray-800 disabled:bg-gray-300 text-white transition-all">
+            <svg class="w-4 h-4" :class="mediaAgentRunning ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.4-6.4l-2.1 2.1M7.7 16.3l-2.1 2.1m12.8 0l-2.1-2.1M7.7 7.7L5.6 5.6"/>
+            </svg>
+            <span x-text="mediaAgentRunning ? 'Media Agent 分析中...' : 'Media Agent 主編分析'"></span>
+          </button>
+          <button @click="refreshAnalytics()" :disabled="analyticsRefreshing"
+            class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white transition-all">
+            <svg class="w-4 h-4" :class="analyticsRefreshing ? 'animate-spin' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5.6 15A7 7 0 0017 18.2M18.4 9A7 7 0 007 5.8"/>
+            </svg>
+            <span x-text="analyticsRefreshing ? '全量抓取中...' : '全量抓取已發影片'"></span>
+          </button>
+        </div>
       </div>
 
       <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -2621,6 +2965,135 @@
       <div x-show="analyticsSummary && analyticsSummary.suspect_stats_count"
         class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
         已排除 <span class="font-semibold" x-text="analyticsSummary?.suspect_stats_count || 0"></span> 筆疑似誤配平台數據（同一個 platform video id 被多個 job 共用）。重新抓取後會用更嚴格的 title / hook / 排程時間匹配。
+      </div>
+
+      <div x-show="mediaAgentReport" class="glass rounded-xl overflow-hidden border border-gray-200">
+        <div class="px-5 py-4 border-b border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+          <div>
+            <p class="text-sm font-bold text-gray-900">Media Ops Agent｜主編雷達</p>
+            <p class="text-xs text-gray-500">
+              內部影片表現 + 外部平台趨勢 + 自動方向建議
+              <span x-show="mediaAgentReport?.generated_at"> · <span x-text="mediaAgentReport?.generated_at?.slice(0,16).replace('T',' ')"></span></span>
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="item in (mediaAgentReport?.strategy?.recommended_mix || []).slice(0,4)" :key="item.strategy">
+              <span class="px-2.5 py-1 rounded-full bg-gray-100 text-xs font-semibold text-gray-700">
+                <span x-text="item.strategy"></span>
+                <span class="text-gray-400">x</span>
+                <span x-text="item.weight"></span>
+              </span>
+            </template>
+          </div>
+        </div>
+        <div class="grid lg:grid-cols-3 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+          <div class="p-5 space-y-3">
+            <p class="text-xs font-semibold text-gray-400 uppercase">主編建議</p>
+            <template x-for="rec in (mediaAgentReport?.recommendations || []).slice(0,5)" :key="rec.title">
+              <div class="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                <p class="text-sm font-semibold text-gray-900" x-text="rec.title"></p>
+                <p class="text-xs text-gray-500 mt-1" x-text="rec.reason"></p>
+                <p class="text-xs text-green-700 mt-2 font-medium" x-text="rec.action"></p>
+              </div>
+            </template>
+          </div>
+          <div class="p-5 space-y-3 bg-gray-50/70">
+            <p class="text-xs font-semibold text-gray-400 uppercase">Daily Briefing</p>
+            <div class="rounded-lg bg-white border border-gray-100 p-3" x-show="mediaAgentReport?.daily_briefing">
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-sm font-semibold text-gray-900">
+                  <span x-text="mediaAgentReport?.daily_briefing?.date"></span>
+                  <span> 主編日報</span>
+                </p>
+                <span class="text-[11px] px-2 py-0.5 rounded-full bg-green-50 text-green-700"
+                  x-text="(mediaAgentReport?.daily_briefing?.jobs || []).length + ' jobs'"></span>
+              </div>
+              <div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                <template x-for="row in (mediaAgentReport?.daily_briefing?.platform_summary || []).slice(0,8)" :key="row.platform">
+                  <div class="rounded-md bg-gray-50 px-2 py-1.5">
+                    <p class="text-xs font-semibold text-gray-800" x-text="platformLabel(row.platform)"></p>
+                    <p class="text-[11px] text-gray-500">
+                      <span x-text="row.uploaded + '/' + row.scheduled"></span>
+                      <span> uploaded</span>
+                      <span x-show="row.views"> · <span x-text="formatNum(row.views)"></span> views</span>
+                    </p>
+                  </div>
+                </template>
+              </div>
+              <div class="mt-3 space-y-2">
+                <template x-for="job in (mediaAgentReport?.daily_briefing?.jobs || []).slice(0,5)" :key="job.job_id">
+                  <div class="border-t border-gray-100 pt-2">
+                    <p class="text-xs font-semibold text-gray-900">
+                      <span x-text="'#' + job.job_id"></span>
+                      <span> · </span>
+                      <span x-text="job.strategy"></span>
+                      <span> · </span>
+                      <span x-text="job.title"></span>
+                    </p>
+                    <p class="text-[11px] text-gray-500 line-clamp-2" x-text="job.decision_reason"></p>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="p-5 space-y-3 bg-gray-50/70">
+            <p class="text-xs font-semibold text-gray-400 uppercase">Creative Directives</p>
+            <template x-for="entry in Object.entries(mediaAgentReport?.strategy?.creative_directives || {}).filter(([k]) => k !== 'new_content_type_backlog').slice(0,4)" :key="entry[0]">
+              <div class="rounded-lg bg-white border border-gray-100 p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="text-sm font-semibold text-gray-900" x-text="entry[0]"></p>
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-black text-white" x-text="entry[1].editing_style || 'style'"></span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">
+                  <span x-text="'hook: ' + ((entry[1].hook_patterns || []).slice(0,3).join(' / '))"></span>
+                  <span x-show="entry[1].visual_change_seconds"> · cut <span x-text="entry[1].visual_change_seconds"></span>s</span>
+                  <span x-show="entry[1].emotion"> · bgm <span x-text="entry[1].emotion"></span></span>
+                </p>
+                <p class="text-xs text-gray-700 mt-2 line-clamp-2" x-text="entry[1].thumbnail_brief"></p>
+              </div>
+            </template>
+            <div class="rounded-lg bg-white border border-gray-100 p-3" x-show="(mediaAgentReport?.strategy?.creative_directives?.new_content_type_backlog || []).length">
+              <p class="text-xs font-semibold text-gray-500 mb-2">New format backlog</p>
+              <template x-for="item in (mediaAgentReport?.strategy?.creative_directives?.new_content_type_backlog || []).slice(0,4)" :key="item.type">
+                <p class="text-xs text-gray-700 mb-1">
+                  <span class="font-semibold" x-text="item.lane + ' · ' + item.type"></span>
+                  <span>： </span>
+                  <span x-text="item.pilot"></span>
+                </p>
+              </template>
+            </div>
+          </div>
+          <div class="p-5 space-y-3">
+            <p class="text-xs font-semibold text-gray-400 uppercase">外部趨勢題材</p>
+            <template x-for="topic in (mediaAgentReport?.external?.topics || []).slice(0,6)" :key="topic.key">
+              <div>
+                <div class="flex items-center justify-between text-sm">
+                  <span class="font-semibold text-gray-800" x-text="topic.label"></span>
+                  <span class="text-xs text-gray-400" x-text="'score ' + topic.score"></span>
+                </div>
+                <div class="h-1.5 rounded-full bg-gray-100 overflow-hidden mt-1">
+                  <div class="h-full bg-gray-900 rounded-full" :style="`width:${Math.min(100, topic.score || 0)}%`"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="p-5 space-y-3">
+            <p class="text-xs font-semibold text-gray-400 uppercase">外部高訊號影片/頻道</p>
+            <template x-for="item in (mediaAgentReport?.external?.top_items || []).slice(0,5)" :key="item.url || item.title">
+              <a :href="item.url || '#'" target="_blank" rel="noopener" class="block rounded-lg hover:bg-gray-50 p-2 -mx-2">
+                <div class="flex items-center justify-between gap-3">
+                  <p class="text-sm font-semibold text-gray-900 line-clamp-2" x-text="item.title"></p>
+                  <span class="text-xs font-mono text-gray-400" x-text="item.score"></span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">
+                  <span x-text="item.source"></span>
+                  <span x-show="item.channel"> · <span x-text="item.channel"></span></span>
+                  <span x-show="item.views"> · <span x-text="formatNum(item.views)"></span> views</span>
+                </p>
+              </a>
+            </template>
+          </div>
+        </div>
       </div>
 
       <div x-show="analyticsLoading" class="glass rounded-xl p-8 text-center text-sm text-gray-500">
@@ -2852,7 +3325,7 @@
             </div>
             <div class="flex-1">
               <p class="text-sm font-medium text-gray-700">🤖 Autopilot（排程時間自動跑 + 自動發布）</p>
-              <p class="text-[11px] text-gray-400">啟用後，每日排程會自動跑「科技新聞 + 娛樂趨勢 + 科技名人解析」，跳過所有 review pause</p>
+              <p class="text-[11px] text-gray-400">啟用後，每日排程會自動跑已啟用的科技、娛樂、人物解析與商業判讀 lane，跳過所有 review pause</p>
             </div>
           </label>
           <label class="flex items-center gap-3 cursor-pointer group ml-12"
@@ -2881,6 +3354,34 @@
             <div class="flex-1">
               <p class="text-sm text-gray-700">人物原片解析（科技大咖）</p>
               <p class="text-[11px] text-gray-400">YouTube MVP：下載科技演講/訪談片段，AI 找金句並加旁白解析</p>
+            </div>
+          </label>
+          <label class="flex items-center gap-3 cursor-pointer group ml-12"
+            x-show="settings.autopilot_enabled === 'true'">
+            <div class="relative">
+              <input type="checkbox" :checked="settings.autopilot_tech_judgement_enabled==='true'"
+                @change="settings.autopilot_tech_judgement_enabled = $event.target.checked ? 'true' : 'false'"
+                class="sr-only peer">
+              <div class="w-9 h-5 bg-gray-200 peer-checked:bg-cyan-600 rounded-full transition-colors"></div>
+              <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></div>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-gray-700">DORO 科技判讀（單題深講）</p>
+              <p class="text-[11px] text-gray-400">不動原本科技新聞；另選 1 則科技題，用 image2 依腳本生成多張場景圖。</p>
+            </div>
+          </label>
+          <label class="flex items-center gap-3 cursor-pointer group ml-12"
+            x-show="settings.autopilot_enabled === 'true'">
+            <div class="relative">
+              <input type="checkbox" :checked="settings.autopilot_business_finance_enabled==='true'"
+                @change="settings.autopilot_business_finance_enabled = $event.target.checked ? 'true' : 'false'"
+                class="sr-only peer">
+              <div class="w-9 h-5 bg-gray-200 peer-checked:bg-emerald-600 rounded-full transition-colors"></div>
+              <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></div>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-gray-700">商業判讀（公司/商業模式）</p>
+              <p class="text-[11px] text-gray-400">抓科技財經與公司新聞，做商業模式、風險與變現解讀；預設不給投資建議。</p>
             </div>
           </label>
           <div x-show="settings.autopilot_enabled === 'true'" class="ml-12">
@@ -2992,7 +3493,7 @@
             <p>2. 搜尋 <span class="font-mono bg-gray-100 px-1 rounded">@userinfobot</span> → 複製你的 Chat ID</p>
             <p>3. 儲存設定後重啟 server，Bot 自動啟動</p>
           </div>
-          <div x-show="settings.telegram_bot_token" class="bg-blue-50 rounded-xl p-3 text-xs text-blue-700">
+          <div x-show="settings.telegram_bot_token_set" class="bg-blue-50 rounded-xl p-3 text-xs text-blue-700">
             可用指令：<span class="font-mono">/run</span> 觸發 &nbsp;·&nbsp; <span class="font-mono">/status</span> 查看 &nbsp;·&nbsp; <span class="font-mono">/cancel</span> 取消 &nbsp;·&nbsp; <span class="font-mono">/jobs</span> 歷史
           </div>
         </div>
@@ -3057,12 +3558,29 @@ function app() {
     videoLibraryFilters: { q: '', kind: 'all', variant: 'all', date: 'all' },
     selectedLibraryVideo: null,
     libraryUploadVideo: null,
-    libraryUploadMeta: null,
+    libraryUploadMeta: window.AutoVideoUI?.emptyPlatformMeta(['youtube','instagram','facebook','threads','x','linkedin']) || {},
     libraryUploadProfile: '',
     libraryUploadLoading: false,
     libraryUploadUploading: false,
     libraryUploadPlatformList: ['youtube','instagram','facebook','threads','x','linkedin'],
     libraryUploadPlatforms: new Set(['youtube','instagram','facebook','threads','x','linkedin']),
+
+    // Entertainment storyboard pool
+    storyboards: [],
+    storyboardAgent: {},
+    storyboardLoading: false,
+    storyboardRunning: false,
+    storyboardPollTimer: null,
+    storyboardIdlePollTimer: null,
+    storyboardRegenerating: false,
+    storyboardRendering: false,
+    storyboardSegmentRendering: false,
+    storyboardLimit: '5',
+    storyboardGenerateImages: false,
+    selectedStoryboard: null,
+    selectedStoryboardFrame: {},
+    storyboardViewMode: 'storyboard',
+    storyboardInspectorOpen: true,
 
     // schedule preview (v2)
     scheduleDays: 7,
@@ -3090,7 +3608,7 @@ function app() {
     appendLangs: new Set(),          // multi-lang selection for append
     appending: false,
     selectedSources: new Set(['google','bing','zhihu']),  // per-source toggle
-    strategy: 'tech',   // tech | tech_tutorial | quote_analysis | entertainment | finance | pet
+    strategy: 'tech',   // tech | tech_tutorial | quote_analysis | entertainment | business_finance | finance | pet
     newsItems: [],      // currently displayed items (may be filtered)
     newsPool: [],       // all fetched items (for replacement)
     selectedIds: new Set(),
@@ -3115,7 +3633,7 @@ function app() {
     uploadPlatforms: new Set(['youtube','tiktok','instagram']),
 
     // Upload preview page state
-    platformMeta: null,          // {youtube:{...}, tiktok:{...}, ...}
+    platformMeta: window.AutoVideoUI?.emptyPlatformMeta(['youtube','tiktok','instagram','facebook','threads','x','linkedin']) || {},          // {youtube:{...}, tiktok:{...}, ...}
     platformMetaLoading: false,
     editingPlatform: null,       // 'youtube' | 'tiktok' | ... | null (modal open for this platform)
     showAdvanced: false,    // toggle for modal's advanced fields section
@@ -3162,7 +3680,18 @@ function app() {
       ['trending_profile_pet',           '趨勢 — 寵物帳號 profile 名稱',  'text', 'pet'],
       ['autopilot_figure_tech_profile',  '人物解析 — 科技帳號 profile 名稱', 'text', 'yt'],
       ['autopilot_figure_tech_names',    '人物解析 — 科技大咖名單（逗號分隔）', 'text', '黃仁勳 Jensen Huang,張忠謀 Morris Chang'],
-      ['cta_kw_tech',                    'ManyChat — 科技類 keyword（caption 用）', 'text', '今日科技'],
+      ['autopilot_business_finance_profile', '商業判讀 — Upload-Post profile 名稱', 'text', 'business'],
+      ['autopilot_business_finance_sources', '商業判讀 — sources', 'text', 'google,bing,hackernews,ithome,last30days'],
+      ['autopilot_business_finance_keywords', '商業判讀 — keywords', 'text', 'AI business model,科技財經,商業模式,企業合約,訂閱制'],
+      ['autopilot_business_finance_offset_hours', '商業判讀 — 排程延後小時', 'number', '2'],
+      ['autopilot_storyboard_profile',   '分鏡池 — Upload-Post profile 名稱', 'text', 'entertainment_yt'],
+      ['autopilot_storyboard_daily_candidates', '分鏡池 — 每日候選數', 'number', '5'],
+      ['autopilot_storyboard_enabled',   '分鏡池 — 每日自動產生', 'text', 'true'],
+      ['manychat_cta_enabled',           'ManyChat CTA — 啟用留言私訊承諾', 'text', 'true'],
+      ['manychat_cta_strategies',        'ManyChat CTA — 允許策略', 'text', 'tech,tech_tutorial,quote_analysis,figure_tech,tech_judgement'],
+      ['media_ops_daily_report_telegram','Media Ops — 每日 Telegram 日報', 'text', 'true'],
+      ['media_ops_publish_authority',     'Media Ops — 軟性品質問題可放行', 'text', 'true'],
+      ['cta_kw_tech',                    'ManyChat — 科技類 keyword（caption 用）', 'text', 'AI'],
       ['cta_kw_entertain',               'ManyChat — 娛樂類 keyword（caption 用）', 'text', '今日娛樂'],
       ['cta_blog_url',                   'ManyChat — DM 連結（部落格 URL）', 'text', 'https://doro-palace.vercel.app/zh/from-ig'],
     ],
@@ -3175,7 +3704,7 @@ function app() {
       // Check if upload key is set
       try {
         const s = await this.api('GET', '/api/settings')
-        this.uploadKeySet = !!(s.upload_post_key)
+        this.uploadKeySet = !!(s.upload_post_key_set)
         this.youtubeKeySet = !!(s.youtube_key_set)
         this.settings = s
       } catch (_) {}
@@ -3190,15 +3719,21 @@ function app() {
     // ── Analytics page ──────────────────────────────────────────
     analyticsJobs: [],
     analyticsSummary: null,
+    mediaAgentReport: null,
     analyticsLoading: false,
     analyticsRefreshing: false,
+    mediaAgentRunning: false,
 
     async loadAnalytics() {
       this.analyticsLoading = true
       try {
-        const d = await this.api('GET', '/api/analytics/overview?limit=50')
+        const [d, agent] = await Promise.all([
+          this.api('GET', '/api/analytics/overview?limit=50'),
+          this.api('GET', '/api/analytics/media-agent/report').catch(() => ({ report: null })),
+        ])
         this.analyticsJobs    = d.jobs || []
         this.analyticsSummary = d.summary || null
+        this.mediaAgentReport = agent.report || null
       } catch (e) {
         this.showToast('分析讀取失敗：' + e.message)
       } finally {
@@ -3364,6 +3899,22 @@ function app() {
       }
     },
 
+    async runMediaAgent() {
+      this.mediaAgentRunning = true
+      try {
+        await this.api('POST', '/api/analytics/media-agent/run?refresh_trends=true')
+        this.showToast('Media Agent 已開始蒐集外部趨勢與內部表現')
+        setTimeout(async () => {
+          await this.loadAnalytics()
+          this.mediaAgentRunning = false
+          this.showToast('Media Agent 報告已更新')
+        }, 45000)
+      } catch (e) {
+        this.mediaAgentRunning = false
+        this.showToast('Media Agent 失敗：' + e.message)
+      }
+    },
+
     formatNum(n) {
       n = Number(n) || 0
       if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
@@ -3478,7 +4029,7 @@ function app() {
 
     async openLibraryUpload(video) {
       this.libraryUploadVideo = video
-      this.libraryUploadMeta = null
+      this.libraryUploadMeta = window.AutoVideoUI?.emptyPlatformMeta(this.libraryUploadPlatformList) || {}
       this.libraryUploadProfile = ''
       this.libraryUploadLoading = true
       this.libraryUploadUploading = false
@@ -3498,7 +4049,7 @@ function app() {
 
     closeLibraryUpload() {
       this.libraryUploadVideo = null
-      this.libraryUploadMeta = null
+      this.libraryUploadMeta = window.AutoVideoUI?.emptyPlatformMeta(this.libraryUploadPlatformList) || {}
       this.libraryUploadUploading = false
     },
 
@@ -3540,6 +4091,309 @@ function app() {
         this.showToast('上傳失敗：' + e.message)
         this.libraryUploadUploading = false
       }
+    },
+
+    async loadStoryboards() {
+      this.storyboardLoading = true
+      try {
+        const data = await this.api('GET', '/api/storyboards?limit=80')
+        this.storyboards = data.items || []
+        this.storyboardAgent = data.agent || {}
+        this.storyboardRunning = this.storyboardAgent?.status === 'running'
+        if (this.storyboardRunning) this.startStoryboardPolling()
+        else this.stopStoryboardPolling()
+        this.ensureStoryboardIdleRefresh()
+        if (this.storyboards.length) {
+          const current = this.storyboards.find(s => s.id === this.selectedStoryboard?.id)
+          this.selectedStoryboard = current || this.storyboards[0]
+        } else {
+          this.selectedStoryboard = null
+        }
+      } catch (e) {
+        this.showToast('分鏡池載入失敗：' + e.message)
+      } finally {
+        this.storyboardLoading = false
+      }
+    },
+
+    storyboardHasSourceUrl(item) {
+      return !!(item?.source_url && /^https?:\/\//i.test(item.source_url))
+    },
+
+    async refreshStoryboardsQuietly() {
+      try {
+        const data = await this.api('GET', '/api/storyboards?limit=80')
+        this.storyboards = data.items || []
+        this.storyboardAgent = data.agent || {}
+        this.storyboardRunning = this.storyboardAgent?.status === 'running'
+        if (this.storyboards.length) {
+          const current = this.storyboards.find(s => s.id === this.selectedStoryboard?.id)
+          this.selectedStoryboard = current || this.storyboards[0]
+        } else {
+          this.selectedStoryboard = null
+        }
+        if (this.storyboardRunning) this.startStoryboardPolling()
+      } catch (_) {}
+    },
+
+    ensureStoryboardIdleRefresh() {
+      if (this.storyboardIdlePollTimer) return
+      this.storyboardIdlePollTimer = setInterval(() => {
+        if (this.page === 'storyboards' && !this.storyboardRunning) {
+          this.refreshStoryboardsQuietly()
+        }
+      }, 8000)
+    },
+
+    startStoryboardPolling() {
+      if (this.storyboardPollTimer) return
+      this.storyboardPollTimer = setInterval(async () => {
+        if (this.page !== 'storyboards') return
+        try {
+          const data = await this.api('GET', '/api/storyboards?limit=80')
+          this.storyboards = data.items || []
+          this.storyboardAgent = data.agent || {}
+          this.storyboardRunning = this.storyboardAgent?.status === 'running'
+          if (this.storyboards.length) {
+            const current = this.storyboards.find(s => s.id === this.selectedStoryboard?.id)
+            this.selectedStoryboard = current || this.storyboards[0]
+          }
+          if (!this.storyboardRunning) {
+            this.stopStoryboardPolling()
+            this.showToast(this.storyboardAgent?.status === 'done' ? '搜尋片段完成' : '搜尋片段已停止')
+          }
+        } catch (e) {
+          this.stopStoryboardPolling()
+          this.storyboardRunning = false
+          this.showToast('熱刷新失敗：' + e.message)
+        }
+      }, 2500)
+    },
+
+    stopStoryboardPolling() {
+      if (!this.storyboardPollTimer) return
+      clearInterval(this.storyboardPollTimer)
+      this.storyboardPollTimer = null
+    },
+
+    async runStoryboardAgent() {
+      if (this.storyboardRunning) return
+      this.storyboardRunning = true
+      try {
+        await this.api('POST', '/api/storyboards/generate', {
+          limit: Number(this.storyboardLimit || 5),
+          generate_images: !!this.storyboardGenerateImages,
+        })
+        this.showToast(this.storyboardGenerateImages ? '已開始搜尋片段並產分鏡圖' : '已開始搜尋片段候選')
+        this.startStoryboardPolling()
+      } catch (e) {
+        this.storyboardRunning = false
+        this.stopStoryboardPolling()
+        this.showToast('搜尋片段啟動失敗：' + e.message)
+      }
+    },
+
+    async setStoryboardStatus(item, status) {
+      if (!item?.id) return
+      try {
+        const data = await this.api('PATCH', `/api/storyboards/${item.id}/status`, { status })
+        const updated = data.item || item
+        this.storyboards = (this.storyboards || []).map(s => s.id === item.id ? updated : s)
+        if (this.selectedStoryboard?.id === item.id) this.selectedStoryboard = updated
+        this.showToast(status === 'approved_for_video' ? '已批准進入影片製作池' : '已更新分鏡狀態')
+      } catch (e) {
+        this.showToast('分鏡狀態更新失敗：' + e.message)
+      }
+    },
+
+    async deleteStoryboardCandidate(item) {
+      if (!item?.id) return
+      const title = item.title || `#${item.id}`
+      if (!confirm(`刪除這個候選？\n\n${title}\n\n會從候選池移除，但不刪 pipeline 產物。`)) return
+      try {
+        await this.api('DELETE', `/api/storyboards/${item.id}`)
+        const wasSelected = this.selectedStoryboard?.id === item.id
+        this.storyboards = (this.storyboards || []).filter(s => s.id !== item.id)
+        if (wasSelected) {
+          this.selectedStoryboard = this.storyboards[0] || null
+          this.selectedStoryboardFrame = {}
+        }
+        this.showToast('候選已刪除')
+      } catch (e) {
+        this.showToast('刪除候選失敗：' + e.message)
+      }
+    },
+
+    selectStoryboard(item) {
+      this.selectedStoryboard = item
+      this.selectedStoryboardFrame = {}
+      this.storyboardViewMode = 'storyboard'
+    },
+
+    openStoryboardFrame(item, frame) {
+      this.selectedStoryboard = item
+      this.selectedStoryboardFrame = frame
+      this.storyboardViewMode = 'storyboard'
+    },
+
+    storyboardSegmentCount(item) {
+      return (item?.frames || []).filter(f => f.video_url).length
+    },
+
+    storyboardFrameIndex() {
+      const frames = this.selectedStoryboard?.frames || []
+      return frames.findIndex(f => f.id === this.selectedStoryboardFrame?.id)
+    },
+
+    storyboardFramePositionLabel() {
+      const idx = this.storyboardFrameIndex()
+      const total = (this.selectedStoryboard?.frames || []).length
+      return idx >= 0 ? `${idx + 1}/${total}` : ''
+    },
+
+    hasStoryboardFrameOffset(offset) {
+      const frames = this.selectedStoryboard?.frames || []
+      const next = this.storyboardFrameIndex() + Number(offset || 0)
+      return next >= 0 && next < frames.length
+    },
+
+    goStoryboardFrame(offset) {
+      if (!this.hasStoryboardFrameOffset(offset)) return
+      const frames = this.selectedStoryboard?.frames || []
+      const next = this.storyboardFrameIndex() + Number(offset || 0)
+      this.selectedStoryboardFrame = frames[next] || {}
+    },
+
+    applyStoryboardUpdate(updated, frameId = null) {
+      if (!updated?.id) return
+      this.storyboards = (this.storyboards || []).map(s => s.id === updated.id ? updated : s)
+      if (this.selectedStoryboard?.id === updated.id) {
+        this.selectedStoryboard = updated
+        if (frameId) {
+          this.selectedStoryboardFrame = (updated.frames || []).find(f => f.id === frameId) || this.selectedStoryboardFrame
+        }
+      }
+    },
+
+    async saveStoryboardFrame() {
+      const item = this.selectedStoryboard
+      const frame = this.selectedStoryboardFrame
+      if (!item?.id || !frame?.id) return
+      try {
+        const data = await this.api('PATCH', `/api/storyboards/${item.id}/frames/${frame.id}`, {
+          title: frame.title || '',
+          visual_prompt: frame.visual_prompt || '',
+          seedance_prompt: frame.seedance_prompt || '',
+          sound_prompt: frame.sound_prompt || '',
+          duration_seconds: 4,
+        })
+        this.applyStoryboardUpdate(data.item || item, frame.id)
+        this.showToast('分鏡 prompt 已儲存')
+      } catch (e) {
+        this.showToast('儲存分鏡失敗：' + e.message)
+      }
+    },
+
+    async regenerateStoryboardFrame() {
+      const item = this.selectedStoryboard
+      const frame = this.selectedStoryboardFrame
+      if (!item?.id || !frame?.id || this.storyboardRegenerating) return
+      this.storyboardRegenerating = true
+      try {
+        await this.saveStoryboardFrame()
+        const data = await this.api('POST', `/api/storyboards/${item.id}/frames/${frame.id}/regenerate`, {})
+        this.applyStoryboardUpdate(data.item || item, frame.id)
+        this.showToast('這格已重生')
+      } catch (e) {
+        this.showToast('重生單格失敗：' + e.message)
+      } finally {
+        this.storyboardRegenerating = false
+      }
+    },
+
+    async regenerateStoryboardFrameVideo() {
+      const item = this.selectedStoryboard
+      const frame = this.selectedStoryboardFrame
+      if (!item?.id || !frame?.id || this.storyboardSegmentRendering || frame.video_status === 'rendering') return
+      this.storyboardSegmentRendering = true
+      try {
+        await this.saveStoryboardFrame()
+        const data = await this.api('POST', `/api/storyboards/${item.id}/frames/${frame.id}/regenerate-video`, {})
+        this.applyStoryboardUpdate(data.item || item, frame.id)
+        this.storyboardViewMode = 'segments'
+        this.showToast('已開始重生該分段影片')
+        this.startStoryboardPolling()
+      } catch (e) {
+        this.showToast('重生分段影片失敗：' + e.message)
+      } finally {
+        this.storyboardSegmentRendering = false
+      }
+    },
+
+    async regenerateStoryboardFrames(item) {
+      if (!item?.id || this.storyboardRegenerating) return
+      this.storyboardRegenerating = true
+      try {
+        const data = await this.api('POST', `/api/storyboards/${item.id}/regenerate-frames`, {})
+        this.applyStoryboardUpdate(data.item || item)
+        this.showToast('分鏡圖已重生')
+      } catch (e) {
+        this.showToast('重生整組失敗：' + e.message)
+      } finally {
+        this.storyboardRegenerating = false
+      }
+    },
+
+    async regenerateStoryboardSheet(item) {
+      return this.regenerateStoryboardFrames(item)
+    },
+
+    async renderStoryboardVideo(item) {
+      if (!item?.id || this.storyboardRendering) return
+      if ((item.image_count || 0) < (item.frame_count || 0)) {
+        this.showToast('要先把每格分鏡圖產完，才會送 Seedance')
+        return
+      }
+      this.storyboardRendering = true
+      try {
+        const data = await this.api('POST', `/api/storyboards/${item.id}/render-video`, {})
+        this.applyStoryboardUpdate(data.item || item)
+        this.showToast('已開始逐段送 Seedance，完成後會顯示影片')
+      } catch (e) {
+        this.showToast('生影片失敗：' + e.message)
+      } finally {
+        this.storyboardRendering = false
+      }
+    },
+
+    storyboardStatusLabel(status) {
+      return ({
+        draft: '草稿',
+        image_failed: '產圖失敗',
+        images_ready: '分鏡完成',
+        approved_for_video: '已批准',
+        video_rendering: '生影片中',
+        video_failed: '影片失敗',
+        archived: '已封存',
+        video_ready: '影片完成',
+        scheduled: '已排程',
+        published: '已發布',
+      })[status || 'draft'] || status
+    },
+
+    storyboardStatusClass(status) {
+      return ({
+        draft: 'bg-gray-50 text-gray-600 border-gray-200',
+        image_failed: 'bg-red-50 text-red-700 border-red-100',
+        images_ready: 'bg-green-50 text-green-700 border-green-100',
+        approved_for_video: 'bg-amber-50 text-amber-700 border-amber-100',
+        video_rendering: 'bg-amber-50 text-amber-700 border-amber-100',
+        video_failed: 'bg-red-50 text-red-700 border-red-100',
+        archived: 'bg-gray-100 text-gray-400 border-gray-200',
+        video_ready: 'bg-blue-50 text-blue-700 border-blue-100',
+        scheduled: 'bg-violet-50 text-violet-700 border-violet-100',
+        published: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+      })[status || 'draft'] || 'bg-gray-50 text-gray-600 border-gray-200'
     },
 
     videoLibraryCount(kind) {
@@ -3808,6 +4662,7 @@ function app() {
       tech:          ['youtube', 'tiktok', 'x'],
       quote_analysis:['youtube', 'instagram', 'facebook', 'threads', 'x', 'linkedin'],
       entertainment: ['tiktok', 'instagram', 'facebook'],
+      business_finance: ['youtube', 'facebook'],
       finance:       ['youtube', 'x'],
       pet:           ['tiktok', 'instagram', 'facebook'],
     },
@@ -4300,7 +5155,7 @@ function app() {
         }
       } catch (e) {
         this.showToast('載入平台設定失敗：' + e.message)
-        this.platformMeta = null
+        this.platformMeta = window.AutoVideoUI?.emptyPlatformMeta(['youtube','tiktok','instagram','facebook','threads','x','linkedin']) || {}
       } finally {
         this.platformMetaLoading = false
       }
@@ -4353,7 +5208,7 @@ function app() {
       this.platformMeta._schedule.timezone       = this.scheduleTimezone
     },
 
-    uploadProfile: null,
+    uploadProfile: { strategy: '', profile: '', profile_found: false, accounts: [] },
 
     openUploadPreview() {
       if (!this.currentJob) return
@@ -4364,7 +5219,7 @@ function app() {
     },
 
     async loadUploadProfile(jobId) {
-      this.uploadProfile = null
+      this.uploadProfile = { strategy: '', profile: '', profile_found: false, accounts: [] }
       try {
         this.uploadProfile = await this.api('GET', `/api/accounts/resolve/${jobId}`)
       } catch (e) {
@@ -4373,7 +5228,7 @@ function app() {
     },
 
     platformIcon(p) {
-      return ({youtube:'▶️',tiktok:'🎵',instagram:'📷',facebook:'📘',threads:'🧵',x:'✖️',linkedin:'💼',bluesky:'🦋',pinterest:'📌'})[p] || '🔗'
+      return window.AutoVideoUI?.platformIcon(p) || '🔗'
     },
 
     async loadAccounts() {
@@ -4538,7 +5393,7 @@ function app() {
     async saveSettings() {
       try {
         this.settings = await this.api('PUT', '/api/settings', this.settings)
-        this.uploadKeySet = !!(this.settings.upload_post_key)
+        this.uploadKeySet = !!(this.settings.upload_post_key_set)
         this.settingsSaved = true
         setTimeout(() => this.settingsSaved = false, 2000)
       } catch (e) { this.showToast('儲存失敗：' + e.message) }
@@ -4567,7 +5422,7 @@ function app() {
     },
 
     async runAutopilotNow() {
-      if (!confirm('確定要立刻跑 autopilot？會產生 1 支科技新聞 + 1 支娛樂趨勢 + 1 支科技名人解析。')) return
+      if (!confirm('確定要立刻跑 autopilot？會依開關產生科技新聞、DORO 科技判讀、娛樂趨勢與科技名人解析。')) return
       try {
         await this.api('POST', '/api/autopilot/run', {})
         this.showToast('🤖 autopilot 已觸發，到 Jobs 頁看進度')

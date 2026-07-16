@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/media")
 BASE_DIR = Path(__file__).parent.parent.parent
 PIPELINE_DIR = BASE_DIR / "pipeline"
 LIBRARY_UPLOAD_PLATFORMS = ["youtube", "instagram", "facebook", "threads", "x", "linkedin"]
+FIGURE_TECH_UPLOAD_PLATFORMS = ["youtube", "instagram", "facebook", "threads", "x"]
 
 
 class LibraryMetaUpdate(BaseModel):
@@ -59,6 +60,33 @@ def _read_news(video_dir: Path) -> dict:
         raise HTTPException(400, f"invalid news.json: {exc}")
 
 
+def _strategy_for_news(news: dict) -> str:
+    return str(news.get("strategy") or "").lower()
+
+
+def _is_unreadable_text(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    visible = [ch for ch in text if not ch.isspace()]
+    if not visible:
+        return True
+    question_marks = sum(1 for ch in visible if ch == "?")
+    return question_marks >= max(3, int(len(visible) * 0.6))
+
+
+def _default_platforms_for_news(news: dict) -> list[str]:
+    if _strategy_for_news(news) == "figure_tech":
+        return list(FIGURE_TECH_UPLOAD_PLATFORMS)
+    return list(LIBRARY_UPLOAD_PLATFORMS)
+
+
+def _filter_platforms_for_news(news: dict, platforms: list[str]) -> list[str]:
+    if _strategy_for_news(news) == "figure_tech":
+        return [p for p in platforms if p != "linkedin"]
+    return platforms
+
+
 def _default_profile_for_news(news: dict) -> str:
     if news.get("account_profile"):
         return str(news.get("account_profile") or "")
@@ -100,8 +128,11 @@ def _read_video_meta(video_dir: Path) -> dict:
     except Exception:
         return meta
     item = (data.get("items") or [{}])[0] if isinstance(data, dict) else {}
+    title = item.get("title") or item.get("hook") or data.get("topic") or video_dir.name
+    if _is_unreadable_text(title):
+        title = video_dir.name
     meta.update({
-        "title": item.get("title") or item.get("hook") or data.get("topic") or video_dir.name,
+        "title": title,
         "figure_name": item.get("figure_name") or "",
         "source_name": item.get("source_name") or item.get("source") or "",
         "source_url": item.get("source_url") or item.get("url") or "",
@@ -256,7 +287,7 @@ def library_platform_meta(key: str):
         "profile": _default_profile_for_news(news),
         "strategy": news.get("strategy") or "",
         "platform_meta": meta,
-        "default_platforms": LIBRARY_UPLOAD_PLATFORMS,
+        "default_platforms": _default_platforms_for_news(news),
     }
 
 
@@ -275,7 +306,7 @@ def upload_library_video(body: LibraryUploadRequest):
     video_dir = _library_video_dir(body.key)
     news = _read_news(video_dir)
     job_key = _library_job_key(video_dir)
-    platforms = body.platforms or LIBRARY_UPLOAD_PLATFORMS
+    platforms = _filter_platforms_for_news(news, body.platforms or _default_platforms_for_news(news))
     if not platforms:
         raise HTTPException(400, "no platforms selected")
 

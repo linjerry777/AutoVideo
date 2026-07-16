@@ -33,6 +33,7 @@ PIPE_DIR = BASE_DIR / "pipeline" / JOB_KEY
 VERSION_DIR = PIPE_DIR / VERSION if VERSION else PIPE_DIR
 NEWS_FILE = PIPE_DIR / "news.json"
 BROLL = PIPE_DIR / "broll" / "broll_01.mp4"
+ANALYSIS_BG = PIPE_DIR / "broll" / "analysis_bg.mp4"
 AUDIO_DIR = VERSION_DIR / "audio"
 ANALYSIS_AUDIO = AUDIO_DIR / "audio_01.mp3"
 ANALYSIS_TIMING = AUDIO_DIR / "audio_01_timing.json"
@@ -42,18 +43,24 @@ PREVIEW_OUTPUT = VERSION_DIR / "insight_quote_output.mp4"
 OUTRO_TEXT = "追蹤我，聽更多名人解析。"
 OUTRO_AUDIO = BASE_DIR / "assets" / "audio" / "outro_follow_figure.mp3"
 DORO_LOGO = BASE_DIR / "assets" / "brand" / "doro_insight_logo.png"
+from web.render_templates import load_render_template_spec
 
 W, H = 1080, 1920
-TOP_SAFE_SHIFT = 90
-VIDEO_Y = 250 + TOP_SAFE_SHIFT
-VIDEO_H = 1010
-TITLE_Y1 = 190
-TITLE_Y2 = 250
-TOP_LOGO_Y = 190
-ANALYSIS_HEADER_H = 235 + TOP_SAFE_SHIFT
-ANALYSIS_TITLE_Y = 170
-ANALYSIS_UNDERLINE_Y = 252
-ANALYSIS_LOGO_Y = 170
+_TEMPLATE_SPEC = load_render_template_spec()
+_FIGURE_SPEC = _TEMPLATE_SPEC.get("figure", {})
+TOP_SAFE_SHIFT = int(_FIGURE_SPEC.get("top_safe_shift", 90))
+VIDEO_Y = int(_FIGURE_SPEC.get("video_y", 250 + TOP_SAFE_SHIFT))
+VIDEO_H = int(_FIGURE_SPEC.get("video_h", 1010))
+VIDEO_CROP_Y = int(_FIGURE_SPEC.get("video_crop_y", max(0, (H - VIDEO_H) // 4)))
+TITLE_Y1 = int(_FIGURE_SPEC.get("title_y1", 190))
+TITLE_Y2 = int(_FIGURE_SPEC.get("title_y2", 250))
+TOP_LOGO_Y = int(_FIGURE_SPEC.get("top_logo_y", 190))
+ANALYSIS_HEADER_H = int(_FIGURE_SPEC.get("analysis_header_h", 235 + TOP_SAFE_SHIFT))
+ANALYSIS_TITLE_Y = int(_FIGURE_SPEC.get("analysis_title_y", 170))
+ANALYSIS_UNDERLINE_Y = int(_FIGURE_SPEC.get("analysis_underline_y", 252))
+ANALYSIS_LOGO_Y = int(_FIGURE_SPEC.get("analysis_logo_y", 170))
+OUTRO_LOGO_SIZE = int(_FIGURE_SPEC.get("outro_logo_size", 300))
+OUTRO_LOGO_Y = int(_FIGURE_SPEC.get("outro_logo_y", 315))
 AUDIO_RATE = "48000"
 AUDIO_CHANNELS = "2"
 FONT_ZH = Path("C:/Windows/Fonts/msjh.ttc")
@@ -364,7 +371,7 @@ def render_quote_part(item: dict, out_path: Path, tmp: Path) -> float:
             f"color=c=black:s={W}x{H}:r=30:d={duration:.3f}[canvas]",
             (
                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},crop={W}:{VIDEO_H}:0:(ih-{VIDEO_H})/2,"
+                f"crop={W}:{H},crop={W}:{VIDEO_H}:0:{VIDEO_CROP_Y},"
                 f"eq=brightness=-0.02:saturation=1.05[main]"
             ),
             f"[canvas][main]overlay=0:{VIDEO_Y}[v0]",
@@ -528,21 +535,20 @@ def render_analysis_part(item: dict, out_path: Path, tmp: Path) -> float:
     title.write_text("DORO 拆解：這句話在講什麼", encoding="utf-8")
     subs = tmp / "analysis.ass"
     make_analysis_ass(rows, start, duration, subs)
+    analysis_bg = ANALYSIS_BG if ANALYSIS_BG.exists() else BROLL
 
     filters = [
-            f"color=c=black:s={W}x{H}:r=30:d={duration:.3f}[canvas]",
             (
                 f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},crop={W}:{VIDEO_H}:0:(ih-{VIDEO_H})/2,"
-                f"eq=brightness=-0.18:saturation=0.9[main]"
+                f"crop={W}:{H},gblur=sigma=18,"
+                f"eq=brightness=-0.24:saturation=0.78[v0]"
             ),
-            f"[canvas][main]overlay=0:{VIDEO_Y}[v0]",
-            f"[v0]drawbox=x=0:y=0:w={W}:h={ANALYSIS_HEADER_H}:color=black@0.90:t=fill[v1]",
             (
-                f"[v1]drawtext=fontfile='{ff_path(FONT_ZH)}':textfile='{ff_path(title)}':"
-                f"fontsize=56:fontcolor=#FFF03A:x=58:y={ANALYSIS_TITLE_Y}:borderw=3:bordercolor=black[v2]"
+                f"[v0]drawtext=fontfile='{ff_path(FONT_ZH)}':textfile='{ff_path(title)}':"
+                f"fontsize=62:fontcolor=#FFF03A:x=(w-text_w)/2:y={ANALYSIS_TITLE_Y}:"
+                f"borderw=2:bordercolor=black[v1]"
             ),
-            f"[v2]drawbox=x=58:y={ANALYSIS_UNDERLINE_Y}:w=190:h=8:color=#FFF03A@0.95:t=fill[v3]",
+            f"[v1]drawbox=x=(iw-240)/2:y={ANALYSIS_UNDERLINE_Y}:w=240:h=8:color=#FFF03A@0.95:t=fill[v3]",
     ]
     last = "v3"
     if DORO_LOGO.exists():
@@ -553,7 +559,7 @@ def render_analysis_part(item: dict, out_path: Path, tmp: Path) -> float:
         last = "v4"
     filters += [
         f"[{last}]subtitles='{ff_path(subs)}':fontsdir='{ff_path('C:/Windows/Fonts')}'[vsub]",
-        f"[vsub]fade=t=in:st=0:d=0.18[v]",
+        f"[vsub]format=yuv420p[v]",
     ]
     cmd = [
             FFMPEG,
@@ -561,7 +567,7 @@ def render_analysis_part(item: dict, out_path: Path, tmp: Path) -> float:
             "-stream_loop",
             "-1",
             "-i",
-            str(BROLL),
+            str(analysis_bg),
             "-ss",
             f"{start:.3f}",
             "-i",
@@ -579,7 +585,7 @@ def render_analysis_part(item: dict, out_path: Path, tmp: Path) -> float:
             "-map",
             "1:a:0",
             "-af",
-            "afade=t=in:st=0:d=0.18",
+            "anull",
             "-c:v",
             "libx264",
             "-preset",
@@ -652,8 +658,8 @@ def render_outro_part(out_path: Path, tmp: Path) -> float:
     last = "v0"
     if DORO_LOGO.exists():
         filters += [
-            f"[2:v]scale=300:300,format=rgba[logo]",
-            f"[{last}][logo]overlay=(W-w)/2:315[vlogo]",
+            f"[2:v]scale={OUTRO_LOGO_SIZE}:{OUTRO_LOGO_SIZE},format=rgba[logo]",
+            f"[{last}][logo]overlay=(W-w)/2:{OUTRO_LOGO_Y}[vlogo]",
         ]
         last = "vlogo"
     filters += [

@@ -12,6 +12,7 @@ interface SubtitleProps {
   script: string;
   /** Accent color used for power-word emphasis. Defaults to punchy yellow. */
   accent?: string;
+  bottom?: number;
 }
 
 // Power-word regex — numbers, percentages, Chinese emphasis words.
@@ -63,6 +64,7 @@ export const Subtitle: React.FC<SubtitleProps> = ({
   timing,
   script,
   accent = "#ffd740",
+  bottom = 340,
 }) => {
   const localFrame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -126,10 +128,10 @@ export const Subtitle: React.FC<SubtitleProps> = ({
     <div
       style={{
         position: "absolute",
-        // 280px from bottom keeps subtitle clear of TikTok/IG/YT-Shorts UI
+        // 340px from bottom keeps subtitle clear of TikTok/IG/YT-Shorts UI
         // overlay zone (like buttons + comments take ~250-350px on mobile).
         // Wife flagged previous 60px as "too low" — covered on phones.
-        bottom: 280,
+        bottom,
         left: 0,
         right: 0,
         display: "flex",
@@ -144,7 +146,7 @@ export const Subtitle: React.FC<SubtitleProps> = ({
     >
       <div
         style={{
-          backgroundColor: "rgba(0,0,0,0.82)",
+          backgroundColor: "rgba(0,0,0,0.88)",
           borderRadius: 16,
           padding: "14px 28px",
           textAlign: "center",
@@ -159,7 +161,7 @@ export const Subtitle: React.FC<SubtitleProps> = ({
             style={{
               fontFamily:
                 '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif',
-              fontSize: 60,
+              fontSize: 58,
               fontWeight: 900,
               color: "#FFFFFF",
               lineHeight: 1.25,

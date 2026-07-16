@@ -19,7 +19,6 @@ Environment variables:
 """
 
 import base64
-import io
 import json
 import os
 import subprocess
@@ -27,8 +26,9 @@ import sys
 from pathlib import Path
 
 # Fix Windows encoding
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from datetime import date
 
@@ -43,6 +43,10 @@ TODAY   = _args.job_key
 VERSION = _args.version
 
 BASE_DIR    = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+from web.render_templates import load_render_template_spec
+
 PIPELINE_ROOT = Path(os.environ.get("PIPELINE_DIR", BASE_DIR / "pipeline")).resolve()
 PIPE_DIR    = PIPELINE_ROOT / TODAY
 NEWS_FILE   = PIPE_DIR / "news.json"
@@ -145,6 +149,8 @@ def build_props(pipe_dir: Path, news_file: Path) -> dict:
     Read news.json and resolve all file paths → return props dict
     matching the NewsVideoProps TypeScript interface.
     """
+    template_spec = load_render_template_spec()
+    news_spec = template_spec.get("news", {})
     raw = json.loads(news_file.read_text(encoding="utf-8"))
     items_raw = raw.get("items", [])
 
@@ -189,6 +195,10 @@ def build_props(pipe_dir: Path, news_file: Path) -> dict:
             "audio":        audio_url,
             "timing":       timing,
             "duration":     duration,
+            "opening_label": item.get("opening_label") or news_spec.get("opening_label") or "",
+            "subtitle_bottom": item.get("subtitle_bottom") or news_spec.get("subtitle_bottom"),
+            "visual_change_seconds": item.get("visual_change_seconds") or news_spec.get("visual_change_seconds"),
+            "hook_pattern": item.get("hook_pattern") or "",
             # Article-card fields — populated by scripts/article_extractor.py
             "bullets":        item.get("bullets") or [],
             "hero_image_b64": item.get("hero_image_b64") or "",
@@ -217,6 +227,7 @@ def build_props(pipe_dir: Path, news_file: Path) -> dict:
         "layout_mode":     layout_mode,
         "mascot":          mascot_url,
         "rotation_offset": rotation_offset,
+        "template_spec":    template_spec,
     }
 
 

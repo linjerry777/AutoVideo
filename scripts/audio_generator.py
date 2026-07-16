@@ -3,9 +3,10 @@
 Audio Generator (Windows版)
 用 Fish Audio 把每則新聞的 script 逐句轉成 MP3，記錄每句時長供字幕精準對齊
 """
-import json, os, re, subprocess, sys, io, shutil, tempfile
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+import json, os, re, subprocess, sys, shutil, tempfile
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 from pathlib import Path
 from datetime import date
 
@@ -45,6 +46,7 @@ DEFAULT_VOICE_ID = os.getenv("FISH_AUDIO_VOICE_ID", "")
 # Per-strategy voice mapping (env vars are optional — fall back to default)
 STRATEGY_VOICE_MAP = {
     "tech":          os.getenv("FISH_AUDIO_VOICE_TECH",          "") or DEFAULT_VOICE_ID,
+    "tech_judgement": os.getenv("FISH_AUDIO_VOICE_TECH",         "") or DEFAULT_VOICE_ID,
     "quote_analysis": os.getenv("FISH_AUDIO_VOICE_TECH",         "") or DEFAULT_VOICE_ID,
     "figure_tech":   os.getenv("FISH_AUDIO_VOICE_TECH",          "") or DEFAULT_VOICE_ID,
     "figure_entertainment": os.getenv("FISH_AUDIO_VOICE_ENTERTAINMENT", "") or DEFAULT_VOICE_ID,
