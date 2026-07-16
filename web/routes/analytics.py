@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from web.db import get_conn, get_job_stats
+from web import analytics_feedback
 
 router = APIRouter(prefix="/api/analytics")
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -58,6 +59,17 @@ def _job_thumbnail_url(date: str, job_id: int) -> str | None:
         if (job_dir / f"thumbnail.{ext}").exists():
             return f"/pipeline_asset/{date_part}/job_{job_id}/thumbnail.{ext}"
     return None
+
+
+def _load_media_agent_report() -> dict:
+    path = BASE_DIR / "data" / "media_ops_report.json"
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+    return {}
 
 
 def _normalize_platform_stats(stats: list[dict]) -> list[dict]:
@@ -174,6 +186,7 @@ def overview(limit: int = 50):
                 p.strip() for p in (j["platforms"] or "").split(",") if p.strip()
             ],
             "platforms": stats,
+            "experiment_meta": analytics_feedback.experiment_meta_for_job(j["date"], j["job_id"]),
         })
 
     baseline_views = _median([r["total_views"] for r in rows if r["total_views"] > 0])
@@ -197,6 +210,8 @@ def overview(limit: int = 50):
         "stats_available": any(r["platforms"] for r in rows),
         "suspect_stats_count": suspect_stats_count,
     }
+    feedback = analytics_feedback.write_feedback(rows)
+    summary["feedback_groups"] = len(feedback.get("groups") or {})
     return {"jobs": rows, "summary": summary}
 
 
@@ -215,7 +230,7 @@ def refresh_analytics(limit: int = 30, job_id: int | None = None, all_done: bool
     elif all_done:
         args += ["--all"]
     else:
-        args += ["--limit", str(limit)]
+        args += ["--smart", "--limit", str(limit)]
     subprocess.Popen(
         args,
         cwd=str(BASE_DIR),
@@ -223,3 +238,25 @@ def refresh_analytics(limit: int = 30, job_id: int | None = None, all_done: bool
         stderr=subprocess.DEVNULL,
     )
     return {"ok": True, "message": "analytics refresh started"}
+
+
+@router.get("/media-agent/report")
+def media_agent_report():
+    report = _load_media_agent_report()
+    return {"ok": bool(report), "report": report}
+
+
+@router.post("/media-agent/run")
+def run_media_agent(refresh_trends: bool = True):
+    """Run the Media Ops Agent in the background."""
+    script = BASE_DIR / "scripts" / "media_ops_agent.py"
+    args = [sys.executable, "-X", "utf8", str(script)]
+    if not refresh_trends:
+        args.append("--no-refresh-trends")
+    subprocess.Popen(
+        args,
+        cwd=str(BASE_DIR),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"ok": True, "message": "media ops agent started"}

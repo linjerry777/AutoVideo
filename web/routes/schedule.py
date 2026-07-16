@@ -26,6 +26,7 @@ _STRATEGY_LABEL = {
     "figure_tech": "科技大咖",
     "figure_entertainment": "娛樂咖",
     "entertainment": "娛樂",
+    "business_finance": "商業判讀",
     "finance":       "財經",
     "pet":           "寵物",
     "generic":       "新聞",

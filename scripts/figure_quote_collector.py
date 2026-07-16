@@ -34,6 +34,9 @@ BASE_DIR = Path(__file__).parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+FIGURE_RENDER_STYLE_VERSION = "figure_reference_v2"
+FIGURE_SEGMENT_CUTOFF_SETTING = "figure_quote_min_segment_created_at"
+
 try:
     from dotenv import load_dotenv
     load_dotenv(BASE_DIR / ".env")
@@ -91,6 +94,120 @@ def _ffmpeg() -> str:
             if f.lower() == "ffmpeg.exe":
                 return str(Path(root) / f)
     raise RuntimeError("找不到 ffmpeg")
+
+
+def _face_aware_crop_filter(video_path: Path, *, target_w: int = 1080, target_h: int = 1920) -> str:
+    safe_filter = (
+        f"[0:v]split=2[bg][fg];"
+        f"[bg]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{target_h},gblur=sigma=24,eq=brightness=-0.18:saturation=0.82[base];"
+        f"[fg]scale={target_w}:-2:force_original_aspect_ratio=decrease[fit];"
+        f"[base][fit]overlay=(W-w)/2:(H-h)/2[outv]"
+    )
+    try:
+        import cv2
+    except Exception:
+        return safe_filter
+
+    cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+    if not cascade_path.exists():
+        return safe_filter
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return safe_filter
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if width <= 0 or height <= 0 or frame_count <= 0:
+        cap.release()
+        return safe_filter
+    cascade = cv2.CascadeClassifier(str(cascade_path))
+    candidates: list[tuple[float, float, int]] = []
+    for i in range(9):
+        frame_no = int((i + 0.5) * frame_count / 9)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, min(frame_count - 1, frame_no))
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = cascade.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=4, minSize=(24, 24))
+        for x, y, w, h in faces:
+            candidates.append((x + w / 2, y + h / 2, int(w * h)))
+    cap.release()
+
+    if not candidates:
+        print("face-aware crop: no face detected, using safe contain layout", flush=True)
+        return safe_filter
+
+    largest_area = max(area for _x, _y, area in candidates)
+    strong = [c for c in candidates if c[2] >= largest_area * 0.45] or candidates
+    total = sum(area for _x, _y, area in strong) or 1
+    face_x = sum(x * area for x, _y, area in strong) / total
+    face_y = sum(y * area for _x, y, area in strong) / total
+    if width > height:
+        crop_w = min(width, max(int((largest_area ** 0.5) * 3.25), int(width * 0.34)))
+        crop_h = min(height, int(round(crop_w * 9 / 16)))
+        if crop_h < int(height * 0.45):
+            crop_h = int(height * 0.45)
+            crop_w = min(width, int(round(crop_h * 16 / 9)))
+        crop_w -= crop_w % 2
+        crop_h -= crop_h % 2
+        crop_x = int(round(face_x - crop_w * 0.75))
+        crop_y = int(round(face_y - crop_h * 0.42))
+        crop_x = max(0, min(max(0, width - crop_w), crop_x))
+        crop_y = max(0, min(max(0, height - crop_h), crop_y))
+        crop_x -= crop_x % 2
+        crop_y -= crop_y % 2
+        print(
+            f"face-aware crop: landscape focus source={width}x{height}, "
+            f"face=({face_x:.0f},{face_y:.0f}), crop={crop_w}x{crop_h}+{crop_x}+{crop_y}",
+            flush=True,
+        )
+        return (
+            f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},split=2[bg][fg];"
+            f"[bg]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+            f"crop={target_w}:{target_h},gblur=sigma=18,eq=brightness=-0.12:saturation=0.9[base];"
+            f"[fg]scale={target_w}:-2:force_original_aspect_ratio=decrease[fit];"
+            f"[base][fit]overlay=(W-w)/2:(H-h)/2[outv]"
+        )
+
+    edge_margin = max(width * 0.18, largest_area ** 0.5 * 0.65)
+    face_near_edge = face_x < edge_margin or face_x > width - edge_margin
+    if face_near_edge:
+        print(
+            f"face-aware crop: face near edge source={width}x{height}, "
+            f"face=({face_x:.0f},{face_y:.0f}); using safe contain layout",
+            flush=True,
+        )
+        return safe_filter
+
+    fill_scale = max(target_w / width, target_h / height)
+    face_px_after_fill = (largest_area ** 0.5) * fill_scale
+    zoom = min(1.35, max(1.0, 300.0 / max(face_px_after_fill, 1.0)))
+    scale = fill_scale * zoom
+    scaled_w = int(round(width * scale))
+    scaled_h = int(round(height * scale))
+    scaled_w += scaled_w % 2
+    scaled_h += scaled_h % 2
+    max_x = max(0, scaled_w - target_w)
+    max_y = max(0, scaled_h - target_h)
+    crop_x = int(round(face_x * scale - target_w * 0.48))
+    crop_y = int(round(face_y * scale - target_h * 0.42))
+    crop_x = max(0, min(max_x, crop_x))
+    crop_y = max(0, min(max_y, crop_y))
+    crop_x -= crop_x % 2
+    crop_y -= crop_y % 2
+    print(
+        f"face-aware crop: source={width}x{height}, face=({face_x:.0f},{face_y:.0f}), "
+        f"zoom={zoom:.2f}, crop=({crop_x},{crop_y})",
+        flush=True,
+    )
+    return (
+        f"scale={scaled_w}:{scaled_h},"
+        f"crop={target_w}:{target_h}:{crop_x}:{crop_y}[outv]"
+    )
 
 
 def parse_timecode(value: str) -> float:
@@ -160,6 +277,79 @@ def _chunk_transcript(cues: list[dict], max_chars: int = 12000) -> str:
     if buf and sum(len(r) for r in rows) < max_chars:
         rows.append(f"[{max(0, last_end - 20):.0f}-{last_end:.0f}] {' '.join(buf)}")
     return "\n".join(rows)[:max_chars]
+
+
+def _cue_text(cue: dict) -> str:
+    return str(cue.get("text") or "").strip()
+
+
+def _trim_transcript_for_retry(cues: list[dict], max_chars: int = 4500) -> str:
+    """Build a smaller transcript spread across the source video for LLM retry."""
+    if not cues:
+        return ""
+    step = max(1, len(cues) // 90)
+    sampled = cues[::step]
+    rows: list[str] = []
+    total = 0
+    for cue in sampled:
+        text = _cue_text(cue)
+        if not text:
+            continue
+        row = f"[{float(cue.get('start') or 0):.0f}-{float(cue.get('end') or 0):.0f}] {text}"
+        if total + len(row) > max_chars:
+            break
+        rows.append(row)
+        total += len(row)
+    return "\n".join(rows)
+
+
+def _analysis_fallback(group: str, video: dict, cues: list[dict], reason: Exception | str) -> dict:
+    """Deterministic fallback so figure autopilot can continue when the LLM proxy times out."""
+    figure = video.get("figure_name") or video.get("channel") or ("Tech leader" if group == "tech" else "Creator")
+    keywords = (
+        "ai", "agent", "future", "gpu", "nvidia", "openai", "model", "compute",
+        "software", "coding", "startup", "market", "competition", "leadership",
+        "innovation", "chip", "data", "robot", "product", "customer",
+    )
+    best: tuple[int, float, float, list[str]] | None = None
+    for idx, cue in enumerate(cues):
+        start = float(cue.get("start") or 0)
+        end = start + 32
+        window = [c for c in cues if start <= float(c.get("start") or 0) <= end]
+        texts = [_cue_text(c) for c in window if _cue_text(c)]
+        if not texts:
+            continue
+        blob = " ".join(texts).lower()
+        score = sum(blob.count(k) for k in keywords) * 5 + min(len(blob), 900) // 70
+        score += max(0, 12 - idx // 80)
+        if best is None or score > best[0]:
+            best = (score, start, max(float(window[-1].get("end") or end), start + 18), texts)
+    if best:
+        _, start, end, texts = best
+    else:
+        start = float(cues[0].get("start") or 0) if cues else 0.0
+        end = start + 30
+        texts = [_cue_text(c) for c in cues[:12] if _cue_text(c)]
+    end = min(max(start + 18, end), start + 45)
+    quote = " ".join(texts)[:260].strip() or str(video.get("title") or "")
+    title = str(video.get("title") or f"{figure} insight")
+    return {
+        "figure_name": figure,
+        "quote_original": quote,
+        "quote_zh": quote,
+        "start_seconds": start,
+        "end_seconds": end,
+        "hook": f"{figure} 這段話其實在提醒我們什麼？",
+        "title": f"{figure}：這段話值得重聽",
+        "summary": f"從 {title[:32]} 這段話，看 AI 競爭真正的重點。",
+        "bullets": ["先抓住原話重點", "再拆背後的產業邏輯", "最後給創作者和工作者的提醒"],
+        "script_short": f"{figure} 這段話的重點不是表面那句，而是他把 AI 競爭拉回到執行力、資料和產品節奏。簡單講，誰能更快把能力變成可用工具，誰就更有優勢。",
+        "script_long": f"{figure} 這段話可以這樣看：AI 的勝負不只在模型多強，而在誰能把技術變成每天真的用得到的產品。這也是為什麼大公司一直搶算力、資料和人才，因為最後比的是迭代速度。對一般人來說，重點不是追每個名詞，而是看懂哪些能力正在被工具化，然後提早放進自己的工作流。",
+        "scene_type": "robot" if group == "tech" else "default",
+        "emotion": "curiosity",
+        "virality_score": 5,
+        "virality_reason": f"LLM analysis fallback used after {type(reason).__name__}",
+    }
 
 
 def _used_urls() -> set[str]:
@@ -306,13 +496,29 @@ def _cues_from_segment_window(window: str, start: float, end: float) -> list[dic
     return [{"start": start, "end": end, "text": window or ""}]
 
 
-def _pool_segment(group: str) -> tuple[dict, list[dict], dict, int] | None:
+def _pool_segment(group: str, segment_id: int | None = None) -> tuple[dict, list[dict], dict, int] | None:
     try:
-        from web.db import pick_figure_quote_segment
+        from web.db import get_conn, get_setting, pick_figure_quote_segment
     except Exception:
         return None
 
-    row = pick_figure_quote_segment(group, min_score=0)
+    if segment_id:
+        cutoff = (get_setting(FIGURE_SEGMENT_CUTOFF_SETTING, "") or "").strip()
+        cutoff_sql = ""
+        params = [segment_id, group]
+        if cutoff:
+            cutoff_sql = " AND datetime(created_at) >= datetime(?)"
+            params.append(cutoff)
+        with get_conn() as conn:
+            row_raw = conn.execute(
+                f"""SELECT * FROM figure_quote_segments
+                   WHERE id=? AND group_name=? AND status='available'
+                     {cutoff_sql}""",
+                params,
+            ).fetchone()
+            row = dict(row_raw) if row_raw else None
+    else:
+        row = pick_figure_quote_segment(group, min_score=0)
     if not row:
         return None
 
@@ -375,24 +581,28 @@ def _video_info(video_url: str) -> dict:
 
 
 def _download_captions(video_url: str, out_dir: Path) -> list[dict]:
-    out_tpl = str(out_dir / "captions.%(ext)s")
-    cmd = _yt_dlp_cmd() + [
-        "--skip-download",
-        "--write-subs",
-        "--write-auto-subs",
-        "--sub-langs", "zh.*,en.*,zh-Hant,zh-TW,zh-CN,zh,zh-Hans,en",
-        "--sub-format", "vtt",
-        "-o", out_tpl,
-        video_url,
-    ]
-    result = _run(cmd, timeout=300)
-    if result.returncode != 0:
-        return []
     cues: list[dict] = []
-    for path in sorted(out_dir.glob("captions*.vtt")):
-        parsed = parse_vtt(path.read_text(encoding="utf-8", errors="replace"))
-        if len(parsed) > len(cues):
-            cues = parsed
+    # Download languages in small batches. YouTube can 429 one auto-translated
+    # subtitle language and make yt-dlp fail the entire request, so English
+    # first is more reliable for the quote-analysis lane.
+    for idx, langs in enumerate(("en.*,en", "zh-Hant,zh-TW,zh-CN,zh-Hans,zh")):
+        out_tpl = str(out_dir / f"captions_{idx}.%(ext)s")
+        cmd = _yt_dlp_cmd() + [
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", langs,
+            "--sub-format", "vtt",
+            "-o", out_tpl,
+            video_url,
+        ]
+        _run(cmd, timeout=300)
+        for path in sorted(out_dir.glob(f"captions_{idx}*.vtt")):
+            parsed = parse_vtt(path.read_text(encoding="utf-8", errors="replace"))
+            if len(parsed) > len(cues):
+                cues = parsed
+        if len(cues) >= 8:
+            return cues
     return cues
 
 
@@ -550,11 +760,26 @@ JSON schema:
   "virality_reason": "一句話"
 }}"""
     print("🧠 LLM 分析金句與解析腳本...", flush=True)
-    raw, _usage = call_claude(prompt, timeout=180)
+    try:
+        raw, _usage = call_claude(prompt, timeout=180)
+    except Exception as exc:
+        print(f"!! LLM analysis failed ({type(exc).__name__}); retrying with compact transcript", flush=True)
+        compact_transcript = _trim_transcript_for_retry(cues)
+        retry_prompt = prompt[:3500] + "\n\nCompact transcript:\n" + compact_transcript
+        try:
+            raw, _usage = call_claude(retry_prompt, timeout=240)
+        except Exception as retry_exc:
+            print(f"!! LLM retry failed ({type(retry_exc).__name__}); using local segment fallback", flush=True)
+            return _analysis_fallback(group, video, cues, retry_exc)
+    if "{" not in (raw or ""):
+        return _analysis_fallback(group, video, cues, "missing_json")
     match = re.search(r"\{[\s\S]*\}", raw or "")
     if not match:
         raise RuntimeError(f"LLM 沒回 JSON: {(raw or '')[:300]}")
-    data = json.loads(match.group(0))
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        return _analysis_fallback(group, video, cues, exc)
     start = float(data.get("start_seconds") or 0)
     end = float(data.get("end_seconds") or start + 30)
     if end <= start:
@@ -583,13 +808,29 @@ def _download_clip(video_url: str, start: float, end: float, out_path: Path) -> 
         raise RuntimeError(f"yt-dlp 下載來源影片失敗: {result.stderr[-500:]}")
     downloaded = candidates[0]
     ffmpeg = _ffmpeg()
-    trim_cmd = [
+    raw_trim = out_path.with_suffix(".raw.mp4")
+    raw_cmd = [
         ffmpeg, "-y",
         "-ss", str(max(0, start - 2)),
         "-i", str(downloaded),
         "-t", str(max(8, end - start + 5)),
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
         "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(raw_trim),
+    ]
+    raw = _run(raw_cmd, timeout=600)
+    if raw.returncode != 0 or not raw_trim.exists():
+        downloaded.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg raw trim failed: {raw.stderr[-500:]}")
+
+    crop_filter = _face_aware_crop_filter(raw_trim)
+    trim_cmd = [
+        ffmpeg, "-y",
+        "-i", str(raw_trim),
+        "-filter_complex", crop_filter,
+        "-map", "[outv]", "-map", "0:a:0?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart",
@@ -598,6 +839,7 @@ def _download_clip(video_url: str, start: float, end: float, out_path: Path) -> 
     print("✂️  本地 ffmpeg 裁切 9:16 broll...", flush=True)
     trim = _run(trim_cmd, timeout=600)
     downloaded.unlink(missing_ok=True)
+    raw_trim.unlink(missing_ok=True)
     if trim.returncode != 0 or not out_path.exists():
         raise RuntimeError(f"ffmpeg 裁切片段失敗: {trim.stderr[-500:]}")
 
@@ -624,6 +866,8 @@ def build_news_item(group: str, video: dict, analysis: dict, cues: list[dict]) -
         "source_name": video.get("channel") or "YouTube",
         "source_published_at": video.get("source_published_at") or "",
         "source_segment_id": video.get("source_segment_id") or "",
+        "render_style_version": FIGURE_RENDER_STYLE_VERSION,
+        "style_profile": "reference_caption_analysis_v2",
         "url": video.get("url"),
         "source": video.get("channel") or "YouTube",
         "figure_name": figure,
@@ -645,6 +889,7 @@ def main() -> None:
     parser.add_argument("--group", choices=["tech", "entertainment"], default="tech")
     parser.add_argument("--strategy", default="")
     parser.add_argument("--profile", default="")
+    parser.add_argument("--segment-id", type=int, default=0, help="Use a specific available quote segment from the pool.")
     parser.add_argument("--url", default="", help="Direct YouTube URL for preview/debug.")
     args = parser.parse_args()
 
@@ -669,9 +914,11 @@ def main() -> None:
             raise RuntimeError("指定影片沒有可用字幕，且 Whisper fallback 不可用")
         analysis = _analyze_quote(args.group, video, cues)
     else:
-        pooled_segment = _pool_segment(args.group)
+        pooled_segment = _pool_segment(args.group, args.segment_id or None)
         if pooled_segment:
             video, cues, analysis, segment_id = pooled_segment
+        elif args.segment_id:
+            raise RuntimeError(f"segment #{args.segment_id} is not available for group {args.group}")
         else:
             video, cues = _choose_candidate(args.group)
             analysis = _analyze_quote(args.group, video, cues)
@@ -694,6 +941,8 @@ def main() -> None:
         "account_profile": args.profile,
         "strategy": strategy,
         "layout_mode": "visual",
+        "render_style_version": FIGURE_RENDER_STYLE_VERSION,
+        "style_profile": "reference_caption_analysis_v2",
         "items": [item],
     }
     (pipe_dir / "news.json").write_text(json.dumps(news, ensure_ascii=False, indent=2), encoding="utf-8")

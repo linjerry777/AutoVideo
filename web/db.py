@@ -136,12 +136,63 @@ def init_db():
                 emotion             TEXT DEFAULT 'curiosity',
                 virality_score      INTEGER DEFAULT 0,
                 virality_reason     TEXT DEFAULT '',
+                quality_score       INTEGER DEFAULT 0,
+                quality_reason      TEXT DEFAULT '',
                 transcript_window   TEXT DEFAULT '',
                 status              TEXT DEFAULT 'available',
                 used_at             TEXT,
                 created_at          TEXT NOT NULL,
                 updated_at          TEXT NOT NULL,
                 UNIQUE(source_url, start_seconds, end_seconds)
+            );
+
+            CREATE TABLE IF NOT EXISTS storyboard_candidates (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                lane                TEXT NOT NULL DEFAULT 'entertainment_storyboard',
+                target_profile      TEXT NOT NULL DEFAULT 'entertainment_yt',
+                title               TEXT NOT NULL,
+                hook                TEXT DEFAULT '',
+                synopsis            TEXT DEFAULT '',
+                reference_title     TEXT DEFAULT '',
+                reference_scene     TEXT DEFAULT '',
+                shot_language       TEXT DEFAULT '',
+                adaptation_rule     TEXT DEFAULT '',
+                source_title        TEXT DEFAULT '',
+                source_url          TEXT DEFAULT '',
+                source_name         TEXT DEFAULT '',
+                source_type         TEXT DEFAULT '',
+                trend_score         INTEGER DEFAULT 0,
+                media_ops_score     INTEGER DEFAULT 0,
+                estimated_seconds   INTEGER DEFAULT 0,
+                estimated_cost_usd  REAL DEFAULT 0,
+                sheet_image_path     TEXT DEFAULT '',
+                output_video_path    TEXT DEFAULT '',
+                video_status         TEXT DEFAULT '',
+                status              TEXT DEFAULT 'draft',
+                agent_reason        TEXT DEFAULT '',
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                approved_at         TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS storyboard_frames (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id        INTEGER NOT NULL,
+                frame_index         INTEGER NOT NULL,
+                shot_code           TEXT DEFAULT '',
+                title               TEXT DEFAULT '',
+                visual_prompt       TEXT DEFAULT '',
+                seedance_prompt     TEXT DEFAULT '',
+                sound_prompt        TEXT DEFAULT '',
+                duration_seconds    INTEGER DEFAULT 4,
+                trim_seconds        REAL DEFAULT 4,
+                image_path          TEXT DEFAULT '',
+                video_path          TEXT DEFAULT '',
+                video_status        TEXT DEFAULT '',
+                status              TEXT DEFAULT 'planned',
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                FOREIGN KEY(candidate_id) REFERENCES storyboard_candidates(id)
             );
 
             INSERT OR IGNORE INTO settings (key, value) VALUES
@@ -158,27 +209,43 @@ def init_db():
                 ('telegram_bot_token',    ''),
                 ('telegram_chat_ids',     ''),
                 ('video_renderer',        'ffmpeg'),
+                ('shorts_trend_calibration_enabled', 'true'),
+                ('media_ops_agent_enabled', 'true'),
+                ('media_ops_publish_authority', 'true'),
+                ('media_ops_daily_report_telegram', 'true'),
                 ('autopilot_enabled',          'false'),
                 ('autopilot_dry_run',          'true'),
                 ('autopilot_news_enabled',     'true'),
+                ('autopilot_tech_judgement_enabled', 'false'),
                 ('autopilot_trending_enabled', 'true'),
+                ('autopilot_storyboard_enabled', 'true'),
+                ('autopilot_storyboard_profile', 'entertainment_yt'),
+                ('autopilot_storyboard_daily_candidates', '5'),
                 ('autopilot_figure_enabled',   'false'),
+                ('autopilot_business_finance_enabled', 'false'),
                 ('autopilot_news_strategy',    'generic'),
                 ('autopilot_news_profile',     'pet'),
+                ('autopilot_tech_judgement_profile', 'yt'),
                 ('autopilot_trending_strategy','entertainment'),
                 ('autopilot_trending_profile', 'pet'),
                 ('trending_profile_quote_analysis', 'yt'),
                 ('autopilot_figure_tech_profile', 'yt'),
+                ('autopilot_business_finance_profile', 'business'),
                 -- TikTok 從 default 拿掉：帳號 shadow ban、每多發一支
                 -- 加深 algorithm 的 bot fingerprint。需要 1 個月手機手發 +
                 -- 互動才能慢慢復健。要恢復就手動把 tiktok 加回去。
                 -- LinkedIn 加入：跟 open-carrusel 對齊 4-platform fan-out
                 -- (IG / Threads / FB / LinkedIn 都是 yt profile)。
-                ('autopilot_platforms',        'youtube,instagram,facebook,threads,x,linkedin'),
+                ('autopilot_platforms',        'youtube,instagram,facebook,threads,x'),
                 ('autopilot_news_sources',     'google,bing,hackernews,ithome,last30days'),
                 ('autopilot_news_keywords',    'AI,人工智慧,ChatGPT,Claude,Gemini,LLM,機器學習,生成式,大型語言模型,深度學習,神經網路,科技,半導體,晶片,GPU,輝達,Nvidia,OpenAI,Anthropic,Meta,Google,Microsoft'),
+                ('autopilot_business_finance_sources', 'google,bing,hackernews,ithome,last30days'),
+                ('autopilot_business_finance_keywords', 'AI business model,科技財經,商業模式,企業合約,訂閱制'),
                 ('autopilot_figure_tech_names', '黃仁勳 Jensen Huang,張忠謀 Morris Chang,Sam Altman,Satya Nadella,Lisa Su,Elon Musk AI,Mark Zuckerberg AI'),
+                ('autopilot_tech_judgement_offset_hours', '1'),
+                ('autopilot_business_finance_offset_hours', '2'),
                 ('autopilot_figure_tech_offset_hours', '8'),
+                ('figure_quote_min_segment_created_at', ''),
                 -- ManyChat-funnel keywords: caption + first_comment 出現「留言『XX』」CTA。
                 -- ManyChat 那邊配對應的 keyword automation → DM 帶 UTM 連結到部落格。
                 -- tech 系（tech / tech_tutorial / finance）走 cta_kw_tech；
@@ -189,7 +256,9 @@ def init_db():
                 --   automation。AutoVideo 影片是 daily news 性質，固定用「日報」，
                 --   DM 連到 claude-code-6-commands-i-use-daily blog post。
                 -- 娛樂另設 ManyChat（暫無 blog 對應，先 placeholder）。
-                ('cta_kw_tech',          '日報'),
+                ('manychat_cta_enabled', 'true'),
+                ('manychat_cta_strategies', 'tech,tech_tutorial,quote_analysis,figure_tech,tech_judgement'),
+                ('cta_kw_tech',          'AI'),
                 ('cta_kw_entertain',     '今日娛樂'),
                 ('cta_blog_url',         'https://doro-palace.vercel.app/zh/from-ig'),
                 -- 娛樂 autopilot 相對新聞延後幾小時，避免 yt + pet 同分鐘
@@ -208,6 +277,31 @@ def init_db():
         for col, defn in new_cols:
             if col not in existing:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {defn}")
+        storyboard_existing = {r[1] for r in conn.execute("PRAGMA table_info(storyboard_candidates)")}
+        if "sheet_image_path" not in storyboard_existing:
+            conn.execute("ALTER TABLE storyboard_candidates ADD COLUMN sheet_image_path TEXT DEFAULT ''")
+        storyboard_candidate_cols = [
+            ("reference_title", "TEXT DEFAULT ''"),
+            ("reference_scene", "TEXT DEFAULT ''"),
+            ("shot_language", "TEXT DEFAULT ''"),
+            ("adaptation_rule", "TEXT DEFAULT ''"),
+            ("output_video_path", "TEXT DEFAULT ''"),
+            ("video_status", "TEXT DEFAULT ''"),
+        ]
+        for col, defn in storyboard_candidate_cols:
+            if col not in storyboard_existing:
+                conn.execute(f"ALTER TABLE storyboard_candidates ADD COLUMN {col} {defn}")
+        storyboard_frame_existing = {r[1] for r in conn.execute("PRAGMA table_info(storyboard_frames)")}
+        storyboard_frame_cols = [
+            ("shot_code", "TEXT DEFAULT ''"),
+            ("sound_prompt", "TEXT DEFAULT ''"),
+            ("trim_seconds", "REAL DEFAULT 4"),
+            ("video_path", "TEXT DEFAULT ''"),
+            ("video_status", "TEXT DEFAULT ''"),
+        ]
+        for col, defn in storyboard_frame_cols:
+            if col not in storyboard_frame_existing:
+                conn.execute(f"ALTER TABLE storyboard_frames ADD COLUMN {col} {defn}")
 
         # news_cache 遷移
         nc_existing = {r[1] for r in conn.execute("PRAGMA table_info(news_cache)")}
@@ -223,6 +317,10 @@ def init_db():
         fqs_existing = {r[1] for r in conn.execute("PRAGMA table_info(figure_quote_segments)")}
         if fqs_existing and "source_published_at" not in fqs_existing:
             conn.execute("ALTER TABLE figure_quote_segments ADD COLUMN source_published_at TEXT DEFAULT ''")
+        if fqs_existing and "quality_score" not in fqs_existing:
+            conn.execute("ALTER TABLE figure_quote_segments ADD COLUMN quality_score INTEGER DEFAULT 0")
+        if fqs_existing and "quality_reason" not in fqs_existing:
+            conn.execute("ALTER TABLE figure_quote_segments ADD COLUMN quality_reason TEXT DEFAULT ''")
 
 
 def _now():
@@ -239,6 +337,189 @@ def create_job(date: str, triggered_by: str = "manual", topic: str = None,
             (date, triggered_by, topic, lang, platforms, selected_cache_ids, _now())
         )
         return cur.lastrowid
+
+
+# ── Storyboard Candidate Pool ─────────────────────────────────────────
+
+def create_storyboard_candidate(candidate: dict, frames: list[dict] | None = None) -> int:
+    now = _now()
+    frames = frames or []
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO storyboard_candidates (
+                lane, target_profile, title, hook, synopsis,
+                reference_title, reference_scene, shot_language, adaptation_rule,
+                source_title, source_url, source_name, source_type,
+                trend_score, media_ops_score, estimated_seconds,
+                estimated_cost_usd, sheet_image_path, output_video_path,
+                video_status, status, agent_reason, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate.get("lane") or "entertainment_storyboard",
+                candidate.get("target_profile") or "entertainment_yt",
+                candidate.get("title") or "",
+                candidate.get("hook") or "",
+                candidate.get("synopsis") or "",
+                candidate.get("reference_title") or "",
+                candidate.get("reference_scene") or "",
+                candidate.get("shot_language") or "",
+                candidate.get("adaptation_rule") or "",
+                candidate.get("source_title") or "",
+                candidate.get("source_url") or "",
+                candidate.get("source_name") or "",
+                candidate.get("source_type") or "",
+                int(candidate.get("trend_score") or 0),
+                int(candidate.get("media_ops_score") or 0),
+                int(candidate.get("estimated_seconds") or 0),
+                float(candidate.get("estimated_cost_usd") or 0),
+                candidate.get("sheet_image_path") or "",
+                candidate.get("output_video_path") or "",
+                candidate.get("video_status") or "",
+                candidate.get("status") or "draft",
+                candidate.get("agent_reason") or "",
+                now,
+                now,
+            ),
+        )
+        candidate_id = int(cur.lastrowid)
+        for idx, frame in enumerate(frames, start=1):
+            conn.execute(
+                """
+                INSERT INTO storyboard_frames (
+                    candidate_id, frame_index, shot_code, title, visual_prompt,
+                    seedance_prompt, sound_prompt, duration_seconds, trim_seconds,
+                    image_path, video_path, video_status, status, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    int(frame.get("frame_index") or idx),
+                    frame.get("shot_code") or "",
+                    frame.get("title") or "",
+                    frame.get("visual_prompt") or "",
+                    frame.get("seedance_prompt") or "",
+                    frame.get("sound_prompt") or "",
+                    int(frame.get("duration_seconds") or 4),
+                    float(frame.get("trim_seconds") or frame.get("duration_seconds") or 4),
+                    frame.get("image_path") or "",
+                    frame.get("video_path") or "",
+                    frame.get("video_status") or "",
+                    frame.get("status") or "planned",
+                    now,
+                    now,
+                ),
+            )
+        return candidate_id
+
+
+def list_storyboard_candidates(limit: int = 50, status: str | None = None) -> list[dict]:
+    limit = max(1, min(int(limit or 50), 200))
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                """
+                SELECT * FROM storyboard_candidates
+                WHERE status=?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM storyboard_candidates
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        items = [dict(row) for row in rows]
+        for item in items:
+            item["frames"] = [
+                dict(frame)
+                for frame in conn.execute(
+                    """
+                    SELECT * FROM storyboard_frames
+                    WHERE candidate_id=?
+                    ORDER BY frame_index ASC
+                    """,
+                    (item["id"],),
+                ).fetchall()
+            ]
+        return items
+
+
+def get_storyboard_candidate(candidate_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM storyboard_candidates WHERE id=?", (candidate_id,)).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["frames"] = [
+            dict(frame)
+            for frame in conn.execute(
+                "SELECT * FROM storyboard_frames WHERE candidate_id=? ORDER BY frame_index ASC",
+                (candidate_id,),
+            ).fetchall()
+        ]
+        return item
+
+
+def update_storyboard_candidate(candidate_id: int, **fields) -> None:
+    allowed = {
+        "target_profile", "title", "hook", "synopsis",
+        "reference_title", "reference_scene", "shot_language", "adaptation_rule",
+        "trend_score",
+        "media_ops_score", "estimated_seconds", "estimated_cost_usd",
+        "sheet_image_path", "output_video_path", "video_status",
+        "status", "agent_reason", "approved_at",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["updated_at"] = _now()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE storyboard_candidates SET {sets} WHERE id=?",
+            [*updates.values(), candidate_id],
+        )
+
+
+def delete_storyboard_candidate(candidate_id: int) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM storyboard_candidates WHERE id=?",
+            (candidate_id,),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM storyboard_frames WHERE candidate_id=?", (candidate_id,))
+        conn.execute("DELETE FROM storyboard_candidates WHERE id=?", (candidate_id,))
+        return True
+
+
+def update_storyboard_frame(frame_id: int, **fields) -> None:
+    allowed = {
+        "shot_code", "title", "visual_prompt", "seedance_prompt", "sound_prompt",
+        "duration_seconds", "trim_seconds", "image_path", "video_path",
+        "video_status", "status",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    updates["updated_at"] = _now()
+    sets = ", ".join(f"{k}=?" for k in updates)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE storyboard_frames SET {sets} WHERE id=?",
+            [*updates.values(), frame_id],
+        )
 
 
 # ── News Cache ────────────────────────────────────────────────────────────────
@@ -323,6 +604,59 @@ def update_job(job_id: int, **kwargs):
         conn.execute(f"UPDATE jobs SET {sets} WHERE id=?", vals)
 
 
+def mark_stale_running_jobs(reason: str, *, except_job_id: int | None = None) -> list[int]:
+    """Mark DB-running jobs as failed when no in-process runner owns them.
+
+    Uvicorn reloads can kill the background worker thread after the job has
+    already been marked running. On the next app start or health check, recover
+    those rows so the dashboard does not show phantom active jobs forever.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        if except_job_id is None:
+            rows = conn.execute("SELECT id FROM jobs WHERE status='running'").fetchall()
+            ids = [int(r["id"]) for r in rows]
+            conn.execute(
+                """
+                UPDATE jobs
+                   SET status='failed',
+                       finished_at=?,
+                       error=?,
+                       step_news=CASE WHEN step_news='running' THEN 'failed' ELSE step_news END,
+                       step_screenshot=CASE WHEN step_screenshot='running' THEN 'failed' ELSE step_screenshot END,
+                       step_audio=CASE WHEN step_audio='running' THEN 'failed' ELSE step_audio END,
+                       step_ai_video=CASE WHEN step_ai_video='running' THEN 'failed' ELSE step_ai_video END,
+                       step_video=CASE WHEN step_video='running' THEN 'failed' ELSE step_video END,
+                       step_upload=CASE WHEN step_upload='running' THEN 'failed' ELSE step_upload END
+                 WHERE status='running'
+                """,
+                (now, reason),
+            )
+        else:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status='running' AND id<>?",
+                (except_job_id,),
+            ).fetchall()
+            ids = [int(r["id"]) for r in rows]
+            conn.execute(
+                """
+                UPDATE jobs
+                   SET status='failed',
+                       finished_at=?,
+                       error=?,
+                       step_news=CASE WHEN step_news='running' THEN 'failed' ELSE step_news END,
+                       step_screenshot=CASE WHEN step_screenshot='running' THEN 'failed' ELSE step_screenshot END,
+                       step_audio=CASE WHEN step_audio='running' THEN 'failed' ELSE step_audio END,
+                       step_ai_video=CASE WHEN step_ai_video='running' THEN 'failed' ELSE step_ai_video END,
+                       step_video=CASE WHEN step_video='running' THEN 'failed' ELSE step_video END,
+                       step_upload=CASE WHEN step_upload='running' THEN 'failed' ELSE step_upload END
+                 WHERE status='running' AND id<>?
+                """,
+                (now, reason, except_job_id),
+            )
+    return ids
+
+
 def get_job(job_id: int) -> dict | None:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -341,6 +675,23 @@ def list_jobs(limit: int = 30, status: str = None) -> list[dict]:
                 "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+
+def count_jobs_for_date_trigger(date: str, triggered_by: str, *, active_only: bool = True) -> int:
+    with get_conn() as conn:
+        if active_only:
+            row = conn.execute(
+                """SELECT COUNT(*) FROM jobs
+                   WHERE date=? AND triggered_by=?
+                     AND status NOT IN ('cancelled', 'failed', 'retired_old_style', 'dry_run')""",
+                (date, triggered_by),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE date=? AND triggered_by=?",
+                (date, triggered_by),
+            ).fetchone()
+        return int(row[0] or 0)
 
 
 def get_stats() -> dict:
@@ -553,6 +904,8 @@ _FIGURE_SEGMENT_FIELDS = {
     "emotion",
     "virality_score",
     "virality_reason",
+    "quality_score",
+    "quality_reason",
     "transcript_window",
     "status",
 }
@@ -591,6 +944,8 @@ def upsert_figure_quote_segment(segment: dict) -> int:
     fields["emotion"] = str(fields.get("emotion") or "curiosity").strip()
     fields["virality_score"] = int(fields.get("virality_score") or 0)
     fields["virality_reason"] = str(fields.get("virality_reason") or "").strip()
+    fields["quality_score"] = int(fields.get("quality_score") or 0)
+    fields["quality_reason"] = str(fields.get("quality_reason") or "").strip()
     fields["transcript_window"] = str(fields.get("transcript_window") or "").strip()
     fields["status"] = str(fields.get("status") or "available").strip()
     if fields.get("source_candidate_id") is not None:
@@ -635,15 +990,26 @@ def mark_figure_quote_segment_used(segment_id: int) -> None:
 
 def pick_figure_quote_segment(group_name: str, min_score: int = 0) -> dict | None:
     with get_conn() as conn:
+        cutoff_row = conn.execute(
+            "SELECT value FROM settings WHERE key='figure_quote_min_segment_created_at'"
+        ).fetchone()
+        cutoff = (cutoff_row["value"] if cutoff_row else "").strip()
+        cutoff_sql = ""
+        params = [group_name, min_score]
+        if cutoff:
+            cutoff_sql = " AND datetime(created_at) >= datetime(?)"
+            params.append(cutoff)
         row = conn.execute(
-            """SELECT *
+            f"""SELECT *
                FROM figure_quote_segments
                WHERE group_name=?
                  AND status='available'
                  AND virality_score>=?
-               ORDER BY virality_score DESC, source_published_at DESC, updated_at DESC
+                 AND (quality_score=0 OR quality_score>=60)
+                 {cutoff_sql}
+               ORDER BY quality_score DESC, virality_score DESC, source_published_at DESC, updated_at DESC
                LIMIT 1""",
-            (group_name, min_score),
+            params,
         ).fetchone()
     return dict(row) if row else None
 
@@ -654,14 +1020,14 @@ def list_figure_quote_segments(group_name: str | None = None, limit: int = 100) 
             rows = conn.execute(
                 """SELECT * FROM figure_quote_segments
                    WHERE group_name=?
-                   ORDER BY status, virality_score DESC, source_published_at DESC, updated_at DESC
+                   ORDER BY status, quality_score DESC, virality_score DESC, source_published_at DESC, updated_at DESC
                    LIMIT ?""",
                 (group_name, limit),
             ).fetchall()
         else:
             rows = conn.execute(
                 """SELECT * FROM figure_quote_segments
-                   ORDER BY group_name, status, virality_score DESC, source_published_at DESC, updated_at DESC
+                   ORDER BY group_name, status, quality_score DESC, virality_score DESC, source_published_at DESC, updated_at DESC
                    LIMIT ?""",
                 (limit,),
             ).fetchall()

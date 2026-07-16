@@ -111,6 +111,111 @@ def call_claude(prompt: str, timeout: int = 180) -> tuple[str, dict]:
     return content.strip(), usage
 
 
+def _norm_url(value: object) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _raw_meta_for_generated(generated: dict, raw_items: list[dict], fallback_index: int = 0) -> dict:
+    """Find the source item behind an LLM-enriched item.
+
+    LLM enrichment rewrites hooks/scripts, but Media Ops scores and source stats
+    must survive so analytics can learn which editorial choices worked.
+    """
+    if not raw_items:
+        return {}
+
+    gen_url = _norm_url(generated.get("source_url") or generated.get("url"))
+    if gen_url:
+        for raw in raw_items:
+            raw_url = _norm_url(raw.get("source_url") or raw.get("url"))
+            if raw_url and raw_url == gen_url:
+                return raw
+
+    if 0 <= fallback_index < len(raw_items):
+        return raw_items[fallback_index]
+    return raw_items[0]
+
+
+def _merge_source_metadata(generated: dict, raw: dict) -> dict:
+    """Preserve non-creative candidate metadata after LLM rewriting."""
+    item = dict(generated)
+    if not raw:
+        return item
+
+    raw_url = raw.get("source_url") or raw.get("url")
+    raw_source = raw.get("source_name") or raw.get("source")
+    if raw_url and not item.get("source_url"):
+        item["source_url"] = raw_url
+    if raw_source and not item.get("source_name"):
+        item["source_name"] = raw_source
+
+    if raw.get("title") and not item.get("raw_title"):
+        item["raw_title"] = raw.get("title")
+    if raw.get("summary") and not item.get("raw_summary"):
+        item["raw_summary"] = raw.get("summary")
+    if raw_url and not item.get("raw_url"):
+        item["raw_url"] = raw_url
+    if raw_source and not item.get("raw_source"):
+        item["raw_source"] = raw_source
+
+    passthrough_keys = {
+        "source_type",
+        "view_count",
+        "like_count",
+        "comment_count",
+        "published_at",
+        "duration",
+        "search_term",
+        "keyword",
+        "stat_badge",
+        "account_suggestion",
+    }
+    for key, value in raw.items():
+        if key.startswith("media_ops_") or key in passthrough_keys:
+            if value not in (None, "") and key not in item:
+                item[key] = value
+    return item
+
+
+def _merge_enriched_metadata(items: list[dict], raw_items: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    for idx, generated in enumerate(items):
+        if not isinstance(generated, dict):
+            continue
+        raw = _raw_meta_for_generated(generated, raw_items, idx)
+        merged.append(_merge_source_metadata(generated, raw))
+    return merged
+
+
+def _candidate_signal_line(item: dict) -> str:
+    signals: list[str] = []
+    for label, key in (
+        ("score", "media_ops_score"),
+        ("virality", "media_ops_virality_score"),
+        ("cluster", "media_ops_cluster"),
+        ("source_key", "media_ops_source_key"),
+        ("views", "view_count"),
+        ("comments", "comment_count"),
+    ):
+        value = item.get(key)
+        if value not in (None, ""):
+            signals.append(f"{label}={value}")
+    return "\n   Media Ops signals: " + " | ".join(signals) if signals else ""
+
+
+def _raw_item_prompt_line(item: dict, idx: int, summary_chars: int = 160) -> str:
+    source = item.get("source") or item.get("source_name") or item.get("channel") or item.get("source_type") or ""
+    title = item.get("title") or item.get("hook") or ""
+    url = item.get("url") or item.get("source_url") or ""
+    summary = str(item.get("summary") or item.get("description") or "")[:summary_chars]
+    return (
+        f"{idx + 1}. [{source}] {title}\n"
+        f"   URL: {url}\n"
+        f"   {summary}"
+        f"{_candidate_signal_line(item)}"
+    )
+
+
 def generate_image(prompt: str, output_path: str | Path, size: str = "1024x1024", timeout: int = 180) -> Path:
     """Generate an image through the Codex Pro/CliRelay image endpoint."""
     proxy_url = (
@@ -148,11 +253,86 @@ _STRATEGY_PRESETS = {
                        "hook_style": "名人一句話 + 反直覺解讀 + AI/vibe coding 行動提醒，像觀點短評，不是新聞播報"},
     "entertainment": {"script_len": "30~50 字",
                       "hook_style": "情緒衝擊（驚喜/反轉/搞笑），開頭必須在 1 秒內抓住注意力"},
+    "business_finance": {"script_len": "80~110 字",
+                         "hook_style": "商業判讀口吻：先講公司真正靠什麼賺錢、風險或代價；不能給買賣建議，必須像商業模式拆解"},
     "finance":       {"script_len": "80~110 字",
                       "hook_style": "數字衝擊（先報關鍵數字再解釋），語氣專業"},
     "pet":           {"script_len": "40~60 字",
                       "hook_style": "可愛/互動（特寫情緒，用問句或感嘆引發共鳴）"},
 }
+
+
+def enrich_tech_judgement_items(raw_items: list[dict], topic: str | None = None) -> list[dict]:
+    """Pick one tech story and turn it into a DORO judgement script.
+
+    Unlike the regular news lane, this returns a single legacy-script item
+    (``script`` + ``script_short`` only) so the pipeline renders one Short and
+    does not create a long variant.
+    """
+    lines = "\n".join(_raw_item_prompt_line(it, i, 220) for i, it in enumerate(raw_items[:10]))
+    if lines:
+        lines = (
+            "Media Ops signals are upstream performance clues. Prefer the item with the strongest "
+            "score, virality, and proven source fit. Use cluster/source as the editorial angle, "
+            "but do not copy the numbers into viewer-facing text.\n"
+            + lines
+        )
+    topic_line = f"指定方向：{topic}\n\n" if topic else ""
+    prompt = f"""你是 DORO 科技判讀的短影音主編。請從候選科技新聞中挑 1 則最值得深講的事件，
+寫成 35-45 秒的繁體中文 Short。這不是原本的快訊整理，而是單題判讀：發生什麼、為什麼重要、誰會受影響。
+
+{topic_line}候選新聞：
+{lines}
+
+請只輸出 JSON array，array 內只能有 1 個 object，不要 markdown。
+欄位：
+{{
+  "hook": "8-16 字，像標題副句，有觀點，不要空泛",
+  "title": "事件短標題，18 字內",
+  "judgement_title_1": "上方主標題第一行，12-18 字",
+  "judgement_title_2": "上方主標題第二行，8-18 字",
+  "summary": "80-120 字，交代事件與判讀",
+  "bullets": ["發生什麼", "為什麼重要", "影響誰"],
+  "script_short": "35-45 秒旁白，繁體中文，口語但有判斷。順序：先一句強 hook，再說事件，再說 DORO 判讀，再收一個追蹤 CTA。",
+  "script": "同 script_short",
+  "scene_type": "robot",
+  "virality_score": 1-10,
+  "virality_reason": "為什麼這題適合做成判讀",
+  "emotion": "curiosity",
+  "visual_prompts": [
+    "English image2 prompt for scene 1, vertical 9:16 editorial tech visual, no text, no logos",
+    "English image2 prompt for scene 2, vertical 9:16 editorial tech visual, no text, no logos",
+    "English image2 prompt for scene 3, vertical 9:16 editorial tech visual, no text, no logos"
+  ],
+  "source_url": "原始 URL",
+  "source_name": "來源名稱"
+}}
+
+visual_prompts 要根據腳本三段拆圖：1 發生什麼、2 為什麼重要、3 影響誰。
+script_short 不要列點，不要太像新聞稿，要像一個科技創作者在下判斷。
+"""
+    raw, usage = call_claude(prompt)
+    if not raw:
+        raise ValueError("Claude returned empty tech judgement response")
+    match = re.search(r"\[[\s\S]*\]", raw)
+    if match:
+        raw = match.group(0)
+    else:
+        raw = re.sub(r"^```[a-z]*\n?", "", raw.strip())
+        raw = re.sub(r"\n?```$", "", raw.strip())
+    try:
+        items = json.loads(raw)
+        if isinstance(items, dict):
+            items = [items]
+        item = dict(items[0])
+        script = str(item.get("script") or item.get("script_short") or item.get("summary") or "").strip()
+        item["script"] = script
+        item["script_short"] = str(item.get("script_short") or script).strip()
+        item.pop("script_long", None)
+        _last_usage.update(usage)
+        return _merge_enriched_metadata([item], raw_items[:10])
+    except (json.JSONDecodeError, IndexError, TypeError) as e:
+        raise ValueError(f"Claude tech_judgement JSON parse failed: {e}\nraw={raw[:500]}")
 
 
 def enrich_news_items(raw_items: list[dict], topic: str | None = None,
@@ -163,6 +343,8 @@ def enrich_news_items(raw_items: list[dict], topic: str | None = None,
     回傳: [{hook, title, summary, script, scene_type, source_url, source_name}, ...]
     """
     strat_key = (strategy or "tech").lower()
+    if strat_key == "tech_judgement":
+        return enrich_tech_judgement_items(raw_items, topic)
     preset = _STRATEGY_PRESETS.get(strat_key, _STRATEGY_PRESETS["tech"])
 
     # tech_tutorial 專屬 override：換掉 hook templates + script 口吻
@@ -234,10 +416,14 @@ scene_type 優先用 robot / warning / trophy / default；emotion 優先用 curi
 CTA 語氣：鼓勵追蹤觀點拆解，不要叫觀眾吵架留言。
 """
 
-    lines = "\n".join([
-        f"{i+1}. [{it['source']}] {it['title']}\n   URL: {it['url']}\n   {it.get('summary','')[:120]}"
-        for i, it in enumerate(raw_items)
-    ])
+    lines = "\n".join(_raw_item_prompt_line(it, i, 120) for i, it in enumerate(raw_items))
+    if lines:
+        lines = (
+            "Media Ops signals are upstream performance clues. Prioritize higher score/virality "
+            "items, use cluster/source to choose the sharpest angle, and make the first 2 seconds "
+            "explain the tension. Do not expose the internal scores to viewers.\n"
+            + lines
+        )
     topic_line = f"主題背景：{topic}\n\n" if topic else ""
     prompt = f"""請使用繁體中文回答。
 {topic_line}以下是用戶選定的新聞，請為每則生成短影音所需的內容。
@@ -324,7 +510,7 @@ Long 適合 YouTube/X/Pinterest/LinkedIn（有鋪陳、有論點）。
         if isinstance(items, dict):
             items = [items]
         _last_usage.update(usage)
-        return items
+        return _merge_enriched_metadata(items, raw_items)
     except json.JSONDecodeError as e:
         raise ValueError(f"Claude 回傳無效 JSON：{e}\n原始內容：{raw[:300]}")
 

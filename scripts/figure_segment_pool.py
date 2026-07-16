@@ -25,6 +25,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from scripts import figure_quote_collector as collector
+from scripts import figure_segment_quality
 from scripts import figure_source_pool
 from scripts import figure_transcript_cache
 from web import db
@@ -72,7 +73,7 @@ def normalize_segments(raw_segments: list[dict], cues: list[dict]) -> list[dict]
         if not quote or len(script_long) < 20:
             continue
 
-        normalized.append({
+        segment = {
             "quote_original": str(item.get("quote_original") or quote).strip(),
             "quote_zh": quote,
             "start_seconds": round(start, 3),
@@ -88,7 +89,15 @@ def normalize_segments(raw_segments: list[dict], cues: list[dict]) -> list[dict]
             "virality_score": int(item.get("virality_score") or 0),
             "virality_reason": str(item.get("virality_reason") or "").strip(),
             "transcript_window": collector.window_text(cues, start - 5, end + 5),
-        })
+        }
+        quality_score, quality_reason = figure_segment_quality.score_segment(segment)
+        segment["quality_score"] = quality_score
+        segment["quality_reason"] = quality_reason
+        # Keep borderline segments visible in the pool with a score/reason.
+        # Selection later prefers high quality, while operators can still see
+        # why a weaker segment exists instead of silently losing it.
+        if quality_score >= 35:
+            normalized.append(segment)
     return normalized
 
 

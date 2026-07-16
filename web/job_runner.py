@@ -1,15 +1,17 @@
 """
 web/job_runner.py — Runs the pipeline as background thread, updates DB + SSE
 """
-import asyncio, json as _json, queue, subprocess, sys, threading
+import asyncio, json as _json, queue, sys, threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from web.db import update_job, get_setting
+from web.pipeline_steps import PipelineStepRunner
 
 BASE_DIR = Path(__file__).parent.parent
 SCRIPTS  = BASE_DIR / "scripts"
 PYTHON   = sys.executable
+_STEP_RUNNER = PipelineStepRunner(SCRIPTS, PYTHON)
 
 
 def _default_layout_for_strategy(strategy: str | None) -> str:
@@ -31,6 +33,50 @@ def _figure_group_for_strategy(strategy: str | None) -> str | None:
     return None
 
 
+def _is_tech_judgement(strategy: str | None) -> bool:
+    return (strategy or "").lower() == "tech_judgement"
+
+
+def _truthy(value) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+_HARD_SCREENSHOT_OBSTRUCTION_KINDS = {
+    "ad",
+    "cookie",
+    "login",
+    "paywall",
+    "popup",
+    "share",
+    "signup",
+    "subscribe",
+}
+
+
+def _media_ops_quality_authority_enabled() -> bool:
+    return _truthy(get_setting("media_ops_publish_authority", "true"))
+
+
+def _media_ops_allows_quality_override(quality: dict) -> tuple[bool, str]:
+    """Allow autopublish for soft capture failures while blocking hard gates."""
+    items = quality.get("items") if isinstance(quality, dict) else []
+    if not isinstance(items, list):
+        return False, "invalid_quality_report"
+    bad = [r for r in items if isinstance(r, dict) and r.get("obstructed")]
+    hard = [
+        r for r in bad
+        if str(r.get("kind") or "").lower() in _HARD_SCREENSHOT_OBSTRUCTION_KINDS
+    ]
+    clean = [r for r in items if isinstance(r, dict) and not r.get("obstructed")]
+    if hard:
+        kinds = sorted({str(r.get("kind") or "other") for r in hard})
+        return False, f"hard_obstruction:{','.join(kinds)}"
+    if clean:
+        kinds = sorted({str(r.get("kind") or "soft") for r in bad})
+        return True, f"soft_capture_issue:{','.join(kinds) or 'unknown'}"
+    return False, "no_clean_screenshot"
+
+
 def _detect_versions(job_key: str) -> list[str | None]:
     """Return list of versions to render.
 
@@ -42,6 +88,8 @@ def _detect_versions(job_key: str) -> list[str | None]:
         return [None]
     try:
         data = _json.loads(news_file.read_text(encoding="utf-8"))
+        if (data.get("strategy") or "").lower() == "tech_judgement":
+            return ["short"]
         items = data.get("items", [])
         if items and all(it.get("script_short") and it.get("script_long") for it in items):
             return ["short", "long"]
@@ -336,16 +384,8 @@ def _notify_obstruction(job_id: int, bad_items: list[dict],
 
 def _call_script(script: str, date: str, extra: list = [],
                  log_path: Path = None) -> tuple[bool, str]:
-    cmd = [PYTHON, str(SCRIPTS / script), date, *extra]
-    result = subprocess.run(
-        cmd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=1500
-    )
-    output = result.stdout + result.stderr
-    if log_path:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"\n=== {script} ===\n{output}\n")
-    return result.returncode == 0, output
+    result = _STEP_RUNNER.run_script(script, date, extra, log_path)
+    return result.ok, result.output
 
 
 def _run_pipeline(job_id: int, date: str, topic: str | None,
@@ -365,9 +405,10 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
     def su(step: str, status: str, **extra):
         _step_update(job_id, date, step, status, **extra)
 
-    update_job(job_id, status="running", started_at=_now(), log_path=str(log_path))
+    update_job(job_id, status="running", started_at=_now(), log_path=str(log_path), error="")
     _broadcast(job_id, {"job_id": job_id, "status": "running"})
     _cancel_flags[job_id] = False
+    auto_publish = autopilot
 
     try:
         # ── Step 1: 新聞 ────────────────────────────────────────────
@@ -434,6 +475,15 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(f"\n[WARN] layout_mode seed failed: {_e}\n")
 
+        if get_setting("shorts_trend_calibration_enabled", "true").lower() == "true":
+            trend_result = _STEP_RUNNER.run_nonfatal(
+                "shorts_trend_calibrator.py",
+                job_key,
+                ["--apply"],
+                log_path,
+                "shorts trend calibration failed (non-fatal)",
+            )
+
         su("news", "done")
         _check_cancel(job_id)
 
@@ -452,7 +502,10 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
         # ── Step 2: 背景素材（截圖 or B-roll）──────────────────────
         bg_mode = get_setting("background_mode", "screenshot")
         su("screenshot", "running")
-        if figure_group:
+        tech_judgement = _is_tech_judgement(strategy)
+        if tech_judgement:
+            ok, out = _call_script("tech_judgement_image_generator.py", job_key, [], log_path)
+        elif figure_group:
             broll_file = pipe_dir / "broll" / "broll_01.mp4"
             if not broll_file.exists():
                 su("screenshot", "failed")
@@ -485,10 +538,10 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
         # / byline for article_rotate / article_* layout modes. Failure is
         # non-fatal — ArticleLayer falls back to the existing screenshot.
         try:
-            if figure_group:
+            if figure_group or tech_judgement:
                 ok_ae, _out_ae = True, ""
                 with open(log_path, "a", encoding="utf-8") as f:
-                    f.write("\n[figure_quote] 略過 article_extractor\n")
+                    f.write("\n[media_only] skip article_extractor\n")
             else:
                 ok_ae, _out_ae = _call_script("article_extractor.py", job_key, [], log_path)
             if not ok_ae:
@@ -555,14 +608,21 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
                     except Exception as _e:
                         with open(log_path, "a", encoding="utf-8") as f:
                             f.write(f"  [WARN] TG notify failed: {_e}\n")
-                    # Force the run out of autopilot publish: video will still
-                    # render so the operator can preview, but upload is gated
-                    # behind a manual confirm in the UI.
-                    if autopilot:
-                        autopilot = False
+                    # Disable only autopublish. Keep the autopilot run itself
+                    # moving so one bad screenshot cannot block the queue.
+                    if auto_publish:
+                        auto_publish = False
                         with open(log_path, "a", encoding="utf-8") as f:
-                            f.write("[OBSTRUCTION_GATE] autopilot disabled, "
-                                    "upload requires manual approval.\n")
+                            f.write("[OBSTRUCTION_GATE] autopublish disabled; "
+                                    "render continues and upload requires manual approval.\n")
+                    if autopilot and _media_ops_quality_authority_enabled():
+                        override_allowed, override_reason = _media_ops_allows_quality_override(qd)
+                        if override_allowed:
+                            screenshot_obstructed = False
+                            auto_publish = True
+                            with open(log_path, "a", encoding="utf-8") as f:
+                                f.write("[MEDIA_OPS_AUTHORITY] override manual_review; "
+                                        f"autopublish restored ({override_reason}).\n")
         except Exception as _e:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[WARN] obstruction gate exception (non-fatal): {_e}\n")
@@ -603,7 +663,9 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
 
         # ── Step 4: 合成影片 (dual-version or legacy) ────────────────
         renderer = get_setting("video_renderer", "ffmpeg").lower()
-        if figure_group:
+        if _is_tech_judgement(strategy):
+            script_name = "tech_judgement_composer.py"
+        elif figure_group:
             script_name = "insight_quote_composer.py"
         else:
             script_name = "remotion_renderer.py" if renderer == "remotion" else "video_composer.py"
@@ -645,9 +707,9 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
         meta_file = pipe_dir / "platform_meta.json"
         if not meta_file.exists() and news_file.exists():
             try:
-                from web.routes.jobs import _seed_platform_meta
+                from web.content_strategy import seed_platform_meta
                 news_data = _json.loads(news_file.read_text(encoding="utf-8"))
-                seed = _seed_platform_meta(news_data)
+                seed = seed_platform_meta(news_data)
                 meta_file.write_text(
                     _json.dumps(seed, ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -656,7 +718,7 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(f"\n[WARN] platform_meta seed failed: {_e}\n")
 
-        if autopilot and not skip_upload:
+        if auto_publish and not skip_upload:
             # Autopilot 直接發布，不等 UI 點擊
             update_job(job_id, step_upload="uploading")
             plat_args = ["--platforms"] + platforms
@@ -692,7 +754,7 @@ def _run_pipeline(job_id: int, date: str, topic: str | None,
                                   "screenshot_obstructed": True,
                                   "obstructed_kinds": obstructed_kinds})
         else:
-            update_job(job_id, status="done", finished_at=_now(),
+            update_job(job_id, status="done", finished_at=_now(), error="",
                        output_path=str(output_mp4))
             _broadcast(job_id, {"job_id": job_id, "status": "done",
                                  "output_path": str(output_mp4)})

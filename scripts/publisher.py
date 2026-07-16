@@ -8,16 +8,20 @@ Publisher — 上傳影片到 YouTube / Instagram
     python scripts/publisher.py 2026-03-20 --platforms youtube instagram
     python scripts/publisher.py 2026-03-20 --dry-run
 """
-import io, json, os, re, sys, argparse
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+import json, os, re, sys, argparse
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from upload_post import UploadPostClient
 
+BASE_DIR  = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(BASE_DIR))
+from web import content_strategy
 from thumbnail_uploader import upload_thumbnail, ThumbnailUploadError
 
 # Cloudflare R2 pre-upload — sidesteps slow 跨國 routing (Taiwan→Frankfurt
@@ -49,6 +53,7 @@ _STRATEGY_GOLDEN_OFFSET = {
     "tech_tutorial": 0,
     "quote_analysis": 0,
     "figure_tech":   0,
+    "business_finance": 0,
     "finance":       0,
     "figure_entertainment": 4,
     "entertainment": 4,
@@ -82,7 +87,6 @@ def _next_golden_slot(platform: str, tz: str | None, offset_hours: int = 0) -> s
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-BASE_DIR  = Path(__file__).parent.parent
 API_KEY   = os.getenv("UPLOAD_POST_KEY", "")
 PROFILE   = os.getenv("UPLOAD_POST_PROFILE", "default")   # 在 .env 設定你的 profile 名稱
 
@@ -93,6 +97,7 @@ _HASHTAGS_BY_STRATEGY = {
     "figure_tech":   "#科技大咖 #黃仁勳 #AI思維 #創業思維 #名人金句",
     "figure_entertainment": "#娛樂咖 #名人金句 #人生金句 #台灣娛樂 #訪談精華",
     "entertainment": "#娛樂 #明星 #藝人 #熱門話題 #八卦",
+    "business_finance": "#商業判讀 #商業模式 #財經新聞 #非投資建議 #科技財經",
     "finance":       "#股市 #投資 #財經 #台股 #理財",
     "pet":           "#萌寵 #貓狗 #寵物 #可愛動物 #療癒",
     "generic":       "#每日新聞 #熱門 #話題",
@@ -101,14 +106,7 @@ _HASHTAGS_BY_STRATEGY = {
 
 def build_metadata(items: list, strategy: str = "tech") -> dict:
     """從新聞 items 組合標題、說明、hashtag (hashtag 跟著 strategy 走)"""
-    titles   = [it["title"] for it in items]
-    title    = " | ".join(titles)
-    desc     = "\n\n".join(
-        f"【{it['hook']}】\n{it['summary']}" for it in items
-    )
-    hashtags = _HASHTAGS_BY_STRATEGY.get((strategy or "tech").lower(),
-                                        _HASHTAGS_BY_STRATEGY["tech"])
-    return dict(title=title, description=f"{desc}\n\n{hashtags}")
+    return content_strategy.build_basic_metadata(items, strategy=strategy)
 
 
 SUPPORTED_PLATFORMS = {"youtube", "instagram", "tiktok", "facebook", "threads", "x", "linkedin"}
@@ -125,7 +123,12 @@ SUPPORTED_PLATFORMS = {"youtube", "instagram", "tiktok", "facebook", "threads", 
 # accounts each Upload-Post profile actually has connected.
 _PROFILE_PLATFORM_ALLOWLIST = {
     # 娛樂線：no LinkedIn account configured on Upload-Post for this profile
-    "pet": {"youtube", "instagram", "tiktok", "facebook", "threads", "x"},
+    # pet currently has no Threads account configured on Upload-Post.
+    # Drop Threads before upload so pet manual fan-out does not finish red.
+    "pet": {"youtube", "instagram", "tiktok", "facebook", "x"},
+    # 奶烙出任務：pet strategy is routed to this profile; FB is allowed now
+    # that the dedicated page exists. Threads/LinkedIn are still not main lanes.
+    "entertainment_yt": {"youtube", "instagram", "tiktok", "facebook", "x"},
 }
 
 
@@ -191,11 +194,29 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
             schedule_kwargs["timezone"] = schedule["timezone"]
     items = data["items"]
     strategy = (data.get("strategy") or "tech").lower()
+    if strategy == "figure_tech" and "linkedin" in platforms:
+        platforms = [p for p in platforms if p != "linkedin"]
+        print("⚠️  figure_tech 不上傳 LinkedIn，已自動略過 linkedin", file=sys.stderr)
+    strategy_blocked = {
+        "tech": {"tiktok"},
+        "figure_tech": {"tiktok"},
+    }.get(strategy, set())
+    if strategy_blocked:
+        before = list(platforms)
+        platforms = [p for p in platforms if p not in strategy_blocked]
+        skipped = [p for p in before if p in strategy_blocked]
+        if skipped:
+            print(f"??  Strategy={strategy} 跳過平台：{skipped}", file=sys.stderr)
     meta  = build_metadata(items, strategy=strategy)
     # Trending pipelines (entertainment/pet/generic) shift +N hours so news
     # (yt) and trending (pet) don't post the exact same minute and trip
     # cross-account spam detection on Meta. News strategies use offset 0.
-    strategy_offset = _STRATEGY_GOLDEN_OFFSET.get(strategy, 0)
+    schedule_offset = 0
+    try:
+        schedule_offset = int(schedule.get("media_ops_offset_hours") or 0)
+    except (TypeError, ValueError):
+        schedule_offset = 0
+    strategy_offset = _STRATEGY_GOLDEN_OFFSET.get(strategy, 0) + max(0, min(6, schedule_offset))
 
     print(f"📤 準備上傳：{output_mp4.name}")
     print(f"   平台：{', '.join(platforms)}")
@@ -267,6 +288,31 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
     def _platform_meta(platform: str) -> dict:
         """Return platform-specific meta dict (never None)."""
         return pmeta.get(platform, {})
+
+    def _upload_title_for_group(group: list[str]) -> str:
+        if len(group) == 1:
+            return _platform_meta(group[0]).get("title") or fallback_title
+        return fallback_title
+
+    def _upload_profile_for_group(group: list[str]) -> str:
+        return PROFILE
+
+    def _apply_single_platform_caption(platform: str, merged_kwargs: dict) -> None:
+        """Upload-Post uses the generic `description` for IG/X/Threads caption.
+
+        When those platforms are uploaded in a mixed group, the generic
+        description can leak the auto-generated fallback caption into the real
+        post even if platform-specific titles are set. For single-platform
+        calls, make the generic description match that platform's own copy.
+        """
+        meta_for_platform = _platform_meta(platform)
+        platform_desc = meta_for_platform.get("description") or meta_for_platform.get("title")
+        if not platform_desc:
+            return
+        if platform in {"instagram", "tiktok", "x", "threads"}:
+            merged_kwargs["description"] = platform_desc
+        if platform == "tiktok":
+            merged_kwargs["tiktok_description"] = platform_desc
 
     def _youtube_language(value: str | None, fallback: str = "zh-TW") -> str:
         """Upload-Post expects locale-region format like zh-TW or en-US."""
@@ -437,9 +483,10 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
                     print(f"❌ legacy output.mp4 也不存在，跳過 {group}", file=sys.stderr)
                     continue
 
-        if auto_per_platform:
+        isolate_caption_platforms = {"instagram", "tiktok", "facebook", "x", "threads"}
+        if auto_per_platform or any(p in isolate_caption_platforms for p in group):
             for p in group:
-                slot = _next_golden_slot(p, tz, offset_hours=strategy_offset)
+                slot = _next_golden_slot(p, tz, offset_hours=strategy_offset) if auto_per_platform else ""
                 extra = {"scheduled_date": slot, "timezone": tz} if slot else {}
                 label = f"{version_key}:{p}@{slot or 'now'}"
                 upload_plan.append((label, video_path, [p], extra))
@@ -451,13 +498,14 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
     # with request_id + status after each upload below.
     schedule_entries: list[dict] = []
     for label, _vp, group, extra in upload_plan:
+        entry_profile = _upload_profile_for_group(group)
         for p in group:
             schedule_entries.append({
                 "platform":       p,
                 "scheduled_date": extra.get("scheduled_date") or "",
                 "timezone":       tz,
                 "video_version":  label.split(":")[0] if ":" in label else "legacy",
-                "profile":        PROFILE,
+                "profile":        entry_profile,
                 "status":         "pending",
                 "request_id":     "",
             })
@@ -499,12 +547,14 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
         last_exc = None
         # Resolve to URL once per platform group; the URL is cheap to reuse.
         video_arg = _resolve_video_arg(video_path)
+        title_arg = _upload_title_for_group(group)
+        user_arg = _upload_profile_for_group(group)
         for attempt in range(1, max_attempts + 1):
             try:
                 return client.upload_video(
                     video_path = video_arg,
-                    title      = fallback_title,
-                    user       = PROFILE,
+                    title      = title_arg,
+                    user       = user_arg,
                     platforms  = group,
                     **merged_kwargs,
                 )
@@ -521,6 +571,8 @@ def publish(job_key: str, platforms: list[str], dry_run: bool = False):
 
     for label, video_path, group, extra in upload_plan:
         merged_kwargs = {**kwargs, **extra}
+        if len(group) == 1:
+            _apply_single_platform_caption(group[0], merged_kwargs)
         print(f"📤 上傳 {label} ({video_path.name}) → {group}")
         try:
             resp = _upload_with_retry(label, video_path, group, merged_kwargs)

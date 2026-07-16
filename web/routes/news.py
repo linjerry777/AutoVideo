@@ -91,6 +91,7 @@ ALL_SOURCES = {
     "dcard":            {"label": "Dcard 熱門",            "icon": "🃏", "default": False, "group": "zh"},
     "youtube_tw":       {"label": "YouTube 熱門 TW",       "icon": "▶️", "default": True,  "group": "en"},
     "youtube_us":       {"label": "YouTube Trending US",   "icon": "▶️", "default": False, "group": "en"},
+    "tiktok_viral":     {"label": "TikTok Viral Videos",    "icon": "🎬", "default": False, "group": "en"},
     "hackernews":       {"label": "Hacker News",           "icon": "🦊", "default": False, "group": "en"},
     "last30days":       {"label": "Social (Reddit·HN)",    "icon": "🌐", "default": False, "group": "en"},
     "ithome":           {"label": "IT之家",                "icon": "🏠", "default": False, "group": "zh"},
@@ -600,6 +601,29 @@ def _fetch_tiktok_tw(keyword: str = None, limit: int = 25, lang: str = "zh-TW") 
         return []
 
 
+def _fetch_tiktok_viral(keyword: str = None, limit: int = 25, region: str = "TW") -> list[dict]:
+    """Fetch high-view TikTok video metadata for trend research.
+
+    This source is intentionally metadata-only. It does not download or transform
+    TikTok videos; downstream lanes can use the rows as references for commentary,
+    original remakes, or licensed workflows.
+    """
+    try:
+        from scripts import tiktok_viral_fetcher
+
+        items = tiktok_viral_fetcher.collect_viral_videos(region=region, period="7", limit=limit)
+        if keyword:
+            needle = keyword.lower()
+            items = [
+                item for item in items
+                if needle in f"{item.get('title', '')} {item.get('summary', '')} {item.get('tiktok_creator', '')}".lower()
+            ]
+        return items[:limit]
+    except Exception as e:
+        log.warning(f"TikTok viral video fetch 失敗: {e}")
+        return []
+
+
 # ── Google Trends TW (daily RSS) ──────────────────────────────────────────────
 
 def _fetch_google_trends_tw(keyword: str = None, limit: int = 25) -> list[dict]:
@@ -651,6 +675,7 @@ def _fetch_all(keyword: str, lang: str, sources: list[str], limit_per: int = 20)
     add("youtube_us",        lambda: _fetch_youtube_trending(keyword, "US", limit_per))
     add("dcard",             lambda: _fetch_dcard(keyword, limit_per))
     add("tiktok_tw",         lambda: _fetch_tiktok_tw(keyword, limit_per, lang=lang))
+    add("tiktok_viral",      lambda: _fetch_tiktok_viral(keyword, limit_per, region="TW"))
     add("google_trends_tw",  lambda: _fetch_google_trends_tw(keyword, limit_per))
     for sid, rss_url in CURATED_RSS.items():
         add(sid, lambda u=rss_url, s=sid: _fetch_rss_source(s, u, keyword, limit_per))
@@ -708,7 +733,7 @@ def fetch_news(
 
     # Trending-only sources don't need a keyword — use empty string so fetchers
     # return full hot feed without keyword-filtering. Keep in sync with ALL_SOURCES.
-    TRENDING_SOURCES = {"youtube_tw", "youtube_us", "tiktok_tw", "google_trends_tw",
+    TRENDING_SOURCES = {"youtube_tw", "youtube_us", "tiktok_tw", "tiktok_viral", "google_trends_tw",
                         "dcard", "zhihu", "hackernews", "last30days", "ithome"}
     all_trending = all(s in TRENDING_SOURCES for s in selected_sources)
     keyword = topic or ("" if all_trending else DEFAULT_KEYWORD)

@@ -1,0 +1,23 @@
+{
+  "canvas": { "width": 1080, "height": 1920 },
+  "safe_zone": { "top": 140, "bottom": 220, "left": 54, "right": 54 },
+  "news": {
+    "opening_label": "先看這個重點",
+    "subtitle_bottom": 340,
+    "visual_change_seconds": 1.8
+  },
+  "figure": {
+    "top_safe_shift": 90,
+    "video_y": 340,
+    "video_h": 1010,
+    "title_y1": 190,
+    "title_y2": 250,
+    "top_logo_y": 190,
+    "analysis_header_h": 325,
+    "analysis_title_y": 170,
+    "analysis_underline_y": 252,
+    "analysis_logo_y": 170,
+    "outro_logo_size": 300,
+    "outro_logo_y": 315
+  }
+}
