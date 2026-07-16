@@ -31,6 +31,9 @@ scraper/node_modules/
 /autovideo-saas-dashboard.png
 /trending-fixed.png
 /video-library*.png
+/*.png
+/frame_*.prompt.txt
+/pipeline*metadata.txt
 
 # Locally downloaded music/SFX. Keep .gitkeep and curated tracked assets.
 assets/music/**/*.mp3
